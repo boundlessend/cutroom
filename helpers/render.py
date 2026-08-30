@@ -133,17 +133,42 @@ def is_hdr_source(video: Path) -> bool:
 
 
 def is_portrait_source(video: Path) -> bool:
-    """Return True if the video's height > width (portrait / vertical)."""
+    """Return True if the displayed video is portrait, including rotation."""
     try:
         out = subprocess.run(
             ["ffprobe", "-v", "error", "-select_streams", "v:0",
-             "-show_entries", "stream=width,height",
-             "-of", "csv=p=0", str(video)],
+             "-show_entries",
+             "stream=width,height:stream_side_data=rotation",
+             "-of", "json", str(video)],
             capture_output=True, text=True, check=True,
         )
-        w, h = map(int, out.stdout.strip().split(","))
+        streams = json.loads(out.stdout).get("streams") or []
+        if not streams:
+            return False
+        stream = streams[0]
+        w, h = int(stream["width"]), int(stream["height"])
+
+        # ffmpeg autorotates display-matrix side data before applying filters.
+        # Swap coded dimensions for quarter-turns so the scale axis is selected
+        # from the dimensions the filter actually sees. A plain metadata tag is
+        # intentionally ignored because it does not guarantee autorotation.
+        rotation = 0
+        for side_data in stream.get("side_data_list") or []:
+            if side_data.get("rotation") is not None:
+                rotation = side_data["rotation"]
+                break
+        if int(round(float(rotation))) % 360 in (90, 270):
+            w, h = h, w
         return h > w
-    except Exception:
+    except (
+        subprocess.CalledProcessError,
+        json.JSONDecodeError,
+        OSError,
+        OverflowError,
+        KeyError,
+        TypeError,
+        ValueError,
+    ):
         return False
 
 
