@@ -1,6 +1,6 @@
 ---
 name: video-use
-description: Edit any video by conversation. Transcribe, cut, color grade, generate overlay animations, burn subtitles - for talking heads, montages, tutorials, travel, interviews. No presets, no menus. Ask questions, confirm the plan, execute, iterate, persist. Production-correctness rules are hard; everything else is artistic freedom. NOT for merely watching a video or pulling its transcript to answer questions about it - that is the watch skill; transcription here is a paid ElevenLabs call.
+description: Edit any video by conversation. Transcribe, cut, color grade, generate overlay animations, burn subtitles - for talking heads, montages, tutorials, travel, interviews. No presets, no menus. Ask questions, confirm the plan, execute, iterate, persist. Production-correctness rules are hard; everything else is artistic freedom. Русские триггеры - «смонтируй видео», «нарежь видео», «собери ролик из дублей», «склей дубли», «вшей субтитры», «сделай цветокор», «наложи анимацию на видео». NOT for merely watching a video or pulling its transcript to answer questions about it - that is the watch skill; transcription here is a paid ElevenLabs call.
 ---
 
 # Video Use
@@ -31,6 +31,7 @@ These are the things where deviation produces silent failures or broken output. 
 10. **Parallel sub-agents for multiple animations.** Never sequential. Spawn N at once via the `Agent` tool; total wall time ≈ slowest one.
 11. **Strategy confirmation before execution.** Never touch the cut until the user has approved the plain-English plan.
 12. **All session outputs in `<videos_dir>/edit/`.** Never write inside the `video-use/` project directory.
+13. **Cost confirmation before `transcribe_batch.py`.** Scribe bills per minute. Name the number of files and the total minutes that are not already cached in `transcripts/`, then wait for the user's go-ahead. This applies to the Inventory step too.
 
 Everything else in this document is a worked example. Deviate whenever the material calls for it.
 
@@ -59,9 +60,10 @@ The skill lives in `video-use/`. User footage lives wherever they put it. All se
 
 First-time install lives in `install.md` (clone, deps, ffmpeg, skill registration, API key). Don't re-run it every session; on cold start just verify:
 
-- `ELEVENLABS_API_KEY` resolves — either in the environment or in `.env` at the video-use repo root. If missing, ask the user to paste one and write it to `.env` (never to the user's `<videos_dir>`).
+- `ELEVENLABS_API_KEY` resolves — either in the environment or in `.env` at the video-use repo root. If missing, never ask the user to paste the key into the chat: the transcript of this session is stored, so ask them to write `.env` themselves (`$EDITOR <repo>/.env`, then `chmod 600`) or to export the key from their password manager, and wait.
 - `ffmpeg` + `ffprobe` on PATH.
-- Python deps installed (`uv sync` or `pip install -e .` inside the repo).
+- `ffmpeg -h filter=subtitles` and `ffmpeg -h filter=zscale` both print a filter description rather than `Unknown filter` (the exit code is 0 either way, read the text). Homebrew's default `ffmpeg` bottle is built without libass and libzimg, and then burning subtitles and tone-mapping HDR (iPhone HLG) sources fail at render time, not at plan time. If either filter is missing, stop and tell the user to reinstall ffmpeg with those libraries.
+- Python deps installed (`uv sync` inside the repo). There is no system `pip` or `python` on this machine and PEP 668 blocks global installs.
 - Node.js + npm available if the session needs HyperFrames or Remotion slots. HyperFrames currently requires Node.js 22+.
 - `yt-dlp`, HyperFrames, Remotion, Manim installed only on first use.
 - First-use animation setup happens inside the slot directory, never at the video-use repo root. HyperFrames can be invoked with `npx --yes hyperframes ...`; Remotion can be scaffolded with `npx create-video@latest` or installed as a project-local dependency before using its `remotion render` command.
@@ -79,7 +81,7 @@ print `--help` under it anyway, which makes a broken environment look healthy.
 - **`transcribe_batch.py <videos_dir>`** — 4-worker parallel transcription. Use for multi-take.
 - **`pack_transcripts.py --edit-dir <dir>`** — `transcripts/*.json` → `takes_packed.md` (phrase-level, break on silence ≥ 0.5s).
 - **`timeline_view.py <video> <start> <end>`** — filmstrip + waveform PNG. On-demand visual drill-down. **Not a scan tool** — use it at decision points, not constantly.
-- **`render.py <edl.json> -o <out>`** — per-segment extract → concat → overlays (PTS-shifted) → subtitles LAST. `--preview` for 720p fast. `--build-subtitles` to generate master.srt inline.
+- **`render.py <edl.json> -o <out>`** — per-segment extract → concat → overlays (PTS-shifted) → subtitles LAST. `--preview` is 1080p / medium / CRF 22 (QC-grade), `--draft` is 720p / ultrafast / CRF 28 (cut-point check only). `--build-subtitles` to generate master.srt inline. Loudness normalization to -14 LUFS is ON by default, `--no-loudnorm` turns it off. The source frame rate is preserved unless `--fps` overrides it. `"grade": "auto"` in the EDL grades every range from its own frames.
 - **`grade.py <in> -o <out>`** — ffmpeg filter chain grade. Presets + `--filter '<raw>'` for custom.
 
 For animations, create `<edit>/animations/slot_<id>/` with `Bash` and spawn a sub-agent via the `Agent` tool.
@@ -285,7 +287,7 @@ Sound is where generated videos sound cheap. Worked rules from launch edits:
 
 ## Output spec
 
-Match the source unless the user asked for something specific. Common targets: `1920×1080@24` cinematic, `1920×1080@30` screen content, `1080×1920@30` vertical social, `3840×2160@24` 4K cinema, `1080×1080@30` square. `render.py` defaults the scale to 1080p from any source; pass `--filter` or edit the extract command for other targets. Worth asking the user which delivery format matters.
+Match the source unless the user asked for something specific. Common targets: `1920×1080@24` cinematic, `1920×1080@30` screen content, `1080×1920@30` vertical social, `3840×2160@24` 4K cinema, `1080×1080@30` square. `render.py` defaults the scale to 1080p from any source and has no `--filter` flag; for other targets edit the extract command, or grade separately with `grade.py --filter`. Worth asking the user which delivery format matters.
 
 ## EDL format
 
@@ -315,7 +317,7 @@ Match the source unless the user asked for something specific. Common targets: `
 Append one section per session at `<edit>/project.md`:
 
 ```markdown
-## Session N — YYYY-MM-DD
+## Session N - YYYY-MM-DD
 
 **Strategy:** one paragraph describing the approach
 **Decisions:** take choices, cuts, grades, animations + why

@@ -42,11 +42,10 @@ If the repo is already there, `git pull --ff-only` and continue.
 ### 2. Install Python deps
 
 ```bash
-# Prefer uv if available; fall back to pip.
-command -v uv >/dev/null && uv sync || pip install -e .
+uv sync
 ```
 
-`pyproject.toml` lists `requests`, `librosa`, `matplotlib`, `pillow`, `numpy`. No console scripts — helpers are invoked directly as `python helpers/<name>.py`.
+`pyproject.toml` lists `requests`, `librosa`, `matplotlib`, `pillow`, `numpy`. No console scripts — helpers are invoked directly as `.venv/bin/python helpers/<name>.py`. There is no pip fallback: this machine has no system `pip` or `python`, and PEP 668 blocks installing into the Homebrew interpreter anyway.
 
 ### 3. Install ffmpeg (+ optional yt-dlp)
 
@@ -102,18 +101,24 @@ Scribe (ElevenLabs) does all transcription. Without a key, nothing transcribes.
     grep -q '^ELEVENLABS_API_KEY=..' ~/Developer/video-use/.env 2>/dev/null && echo "dotenv"
     ```
 
-2. If neither is set, ask the user exactly once:
+2. If neither is set, ask the user exactly once, and never ask them to paste the key into the chat. Anything pasted into a session ends up in the stored transcript and in the observation database, which is how secrets leak. The user writes the file themselves:
 
-    > I need an ElevenLabs API key for transcription (word-level timestamps, speaker diarization, filler tagging). Grab one at https://elevenlabs.io/app/settings/api-keys and paste it here — I'll write it to `~/Developer/video-use/.env`. Or if you already have it exported as `ELEVENLABS_API_KEY`, say "use env" and I'll skip.
+    > I need an ElevenLabs API key for transcription (word-level timestamps, speaker diarization, filler tagging). Grab one at https://elevenlabs.io/app/settings/api-keys, then write it yourself, without pasting it here:
+    >
+    > ```bash
+    > $EDITOR ~/Developer/video-use/.env      # one line: ELEVENLABS_API_KEY=...
+    > chmod 600 ~/Developer/video-use/.env
+    > ```
+    >
+    > Or, if you keep the key in the macOS Keychain, export it in your shell instead:
+    >
+    > ```bash
+    > export ELEVENLABS_API_KEY="$(security find-generic-password -s elevenlabs-api-key -w)"
+    > ```
+    >
+    > Say "done" when the file or the variable is in place.
 
-    When the user pastes a key, write it to `~/Developer/video-use/.env`:
-
-    ```bash
-    printf 'ELEVENLABS_API_KEY=%s\n' "$KEY" > ~/Developer/video-use/.env
-    chmod 600 ~/Developer/video-use/.env
-    ```
-
-    Never echo the key back in tool output. Never commit `.env`.
+    Then re-run the checks in step 1. Never write the key yourself, never echo it back in tool output, never commit `.env`.
 
 3. Sanity check with a cheap, quota-free call:
 
@@ -130,8 +135,10 @@ Scribe (ElevenLabs) does all transcription. Without a key, nothing transcribes.
 Run one real thing. Prefer the lightest verification that still proves the pipeline is wired up:
 
 ```bash
-python ~/Developer/video-use/helpers/timeline_view.py --help >/dev/null && echo "helpers OK"
+~/Developer/video-use/.venv/bin/python ~/Developer/video-use/helpers/timeline_view.py --help >/dev/null && echo "helpers OK"
 ffprobe -version | head -1
+# exit code is 0 even for a missing filter, so read the text
+for f in subtitles zscale; do ffmpeg -hide_banner -h filter=$f 2>&1 | grep -q 'Unknown filter' && echo "MISSING FILTER: $f"; done
 ```
 
 Full transcription test is optional at install time — it burns Scribe credits. Better to wait until the user hands you their first clip.
@@ -148,13 +155,13 @@ Tell the user, in one short message:
 ## Keeping the skill current
 
 - `cd ~/Developer/video-use && git pull --ff-only` pulls the latest code. The symlink auto-picks it up on the next run.
-- If `pyproject.toml` changed deps, re-run `uv sync` / `pip install -e .` after pulling.
+- If `pyproject.toml` changed deps, re-run `uv sync` after pulling.
 
 ## Cold-start reminders
 
 - Symlink the **whole directory**, not just `SKILL.md`. The helpers need to sit next to it.
 - If `.env` exists but the key is empty, treat it the same as missing — don't assume existence means validity.
-- `ffmpeg` from static builds works fine. Any modern (≥ 4.x) build is enough.
+- `ffmpeg` from static builds works fine. Any modern (≥ 4.x) build is enough, but it must carry libass (the `subtitles` / `ass` filters) and libzimg (`zscale`). The default Homebrew bottle carries neither, and burning subtitles or tone-mapping an HDR source then fails only at render time.
 - `yt-dlp` is optional. Don't block install on it; install lazily the first time a user asks to pull from a URL.
 - Node.js/npm are only needed for HyperFrames or Remotion slots. HyperFrames currently requires Node.js 22+.
 - HyperFrames, Remotion, and Manim are optional animation engines. Don't install or prefer one globally during setup; pick the engine per animation slot in `SKILL.md`. HyperFrames can run through `npx --yes hyperframes ...` in the slot directory. Remotion can be scaffolded with `npx create-video@latest` or installed inside the slot before rendering.
