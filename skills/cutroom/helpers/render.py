@@ -34,6 +34,7 @@ from fractions import Fraction
 from pathlib import Path
 
 from grade import auto_grade_for_clip, get_preset  # same directory
+from transcribe import count_audio_tracks
 
 
 # -------- Subtitle style (bold-overlay, proven at 1920×1080 and 1080×1920) --
@@ -361,12 +362,26 @@ def extract_segment(
     else:
         preset, crf = "fast", "20"
 
+    n_audio = count_audio_tracks(source)
+    if n_audio == 0:
+        # A source without sound (screen capture, B-roll) gets silence: every
+        # segment needs the same streams for the concat.
+        audio_in = ["-f", "lavfi", "-t", f"{duration:.6f}", "-i", "anullsrc=r=48000:cl=stereo"]
+        audio_map = "1:a:0"
+    elif audio_track < n_audio:
+        audio_in, audio_map = [], f"0:a:{audio_track}"
+    else:
+        raise ValueError(
+            f"{source.name} has {n_audio} audio track(s), the EDL asks for audio_track {audio_track} (zero-based)"
+        )
+
     cmd = [
         "ffmpeg", "-y",
         "-ss", f"{seg_start:.3f}",
         "-i", str(source),
+        *audio_in,
         "-t", f"{duration:.6f}",
-        "-map", "0:v:0", "-map", f"0:a:{audio_track}",
+        "-map", "0:v:0", "-map", audio_map,
         "-vf", vf,
         "-af", af,
         "-frames:v", str(frames),
