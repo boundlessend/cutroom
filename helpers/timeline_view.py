@@ -10,12 +10,17 @@ Use this at decision points — ambiguous pauses, retake disambiguation,
 cut-point sanity checks. Do NOT call it in a scan loop over every
 utterance; it's an on-demand drill-down, not a background index.
 
+--edl mode draws one sheet for a whole EDL: every range as its first,
+middle and last moment in the source, numbered. It answers the questions
+a reframing or take plan depends on before anything is rendered: where
+the subject holds something up, turns away, leaves the frame.
+
 Usage:
     python helpers/timeline_view.py <video> <start> <end>
     python helpers/timeline_view.py <video> <start> <end> -o out.png
     python helpers/timeline_view.py <video> <start> <end> --n-frames 12
     python helpers/timeline_view.py <video> <start> <end> --transcript <path>
-    python helpers/timeline_view.py --edl <edl.json>   (full-project view — not yet)
+    python helpers/timeline_view.py --edl <edl.json> [-o sheet.png]
 """
 
 from __future__ import annotations
@@ -330,6 +335,58 @@ def render_timeline(
         print(f"saved: {out_path}  ({out_path.stat().st_size // 1024} KB)")
 
 
+def frame_at(video: Path, t: float, dest: Path, height: int) -> Image.Image:
+    cmd = [
+        "ffmpeg", "-y", "-ss", f"{max(0.0, t):.3f}", "-i", str(video),
+        "-frames:v", "1", "-q:v", "4", "-vf", f"scale=-2:{height}", str(dest),
+    ]
+    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return Image.open(dest).convert("RGB")
+
+
+def range_label(i: int, r: dict) -> str:
+    frame = r.get("frame")
+    zoom = f" z{float(frame['z']):.2f}" if isinstance(frame, dict) and "z" in frame else ""
+    topic = " ▸" if r.get("topic") else ""
+    return f"{i:02d}{zoom}{topic}"
+
+
+def render_edl_sheet(edl_path: Path, out_path: Path, cell_h: int = 160, max_width: int = 2400) -> None:
+    """One cell per EDL range: its first, middle and last source moment, numbered."""
+    edl = json.loads(edl_path.read_text())
+    edit_dir = edl_path.parent
+    font = load_font(18)
+    cells: list[Image.Image] = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for i, r in enumerate(edl["ranges"]):
+            src = Path(edl["sources"][r["source"]])
+            src = src if src.is_absolute() else (edit_dir / src).resolve()
+            start, end = float(r["start"]), float(r["end"])
+            inset = min(0.3, (end - start) / 4)
+            times = (start + inset, (start + end) / 2, end - inset)
+            thumbs = [frame_at(src, t, Path(tmp) / f"{i}_{k}.jpg", cell_h) for k, t in enumerate(times)]
+            cell = Image.new("RGB", (sum(t.width for t in thumbs) + 2 * (len(thumbs) - 1), cell_h), BG)
+            x = 0
+            for t in thumbs:
+                cell.paste(t, (x, 0))
+                x += t.width + 2
+            d = ImageDraw.Draw(cell)
+            label = range_label(i, r)
+            d.rectangle((0, 0, 12 + 11 * len(label), 24), fill=(0, 0, 0))
+            d.text((4, 2), label, fill=ACCENT, font=font)
+            cells.append(cell)
+
+    gap = 6
+    cols = max(1, (max_width + gap) // (cells[0].width + gap))
+    rows = (len(cells) + cols - 1) // cols
+    sheet = Image.new("RGB", (cols * (cells[0].width + gap) - gap, rows * (cell_h + gap) - gap), BG)
+    for n, cell in enumerate(cells):
+        sheet.paste(cell, ((n % cols) * (cells[0].width + gap), (n // cols) * (cell_h + gap)))
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    sheet.save(out_path, "PNG", optimize=True)
+    print(f"saved: {out_path}  ({len(cells)} ranges, {out_path.stat().st_size // 1024} KB)")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Filmstrip + waveform composite for a video range")
     ap.add_argument("video", type=Path, nargs="?", help="Source video")
@@ -348,12 +405,16 @@ def main() -> None:
         "--edl",
         type=Path,
         default=None,
-        help="(Not yet implemented) Render a full-project timeline from an EDL",
+        help="Sheet of every EDL range (first, middle, last source frame) instead of a time range",
     )
     args = ap.parse_args()
 
     if args.edl:
-        sys.exit("--edl mode is not implemented yet; use range mode")
+        edl_path = args.edl.resolve()
+        if not edl_path.exists():
+            sys.exit(f"edl not found: {edl_path}")
+        render_edl_sheet(edl_path, args.output or edl_path.parent / "verify" / "edl_ranges.png")
+        return
 
     if not args.video or args.start is None or args.end is None:
         ap.error("video, start, and end are required")
