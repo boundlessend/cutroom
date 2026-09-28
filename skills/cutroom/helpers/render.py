@@ -760,6 +760,22 @@ def apply_loudnorm_two_pass(
     return True
 
 
+def alpha_decoder(overlay: Path) -> list[str]:
+    """Input options that keep a WebM overlay's alpha. ffmpeg's native VP8/VP9
+    decoders drop it, and a transparent overlay then covers the whole frame."""
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(overlay)],
+        capture_output=True, text=True, check=True,
+    )
+    codec = out.stdout.strip()
+    if codec == "vp9":
+        return ["-c:v", "libvpx-vp9"]
+    if codec == "vp8":
+        return ["-c:v", "libvpx"]
+    return []
+
+
 def filter_path(path: Path) -> str:
     """A path as a filter option value, escaped once for the option parser and once
     for the filtergraph (ffmpeg-filters, "Notes on filtergraph escaping"). Quoting
@@ -803,7 +819,7 @@ def build_final_composite(
     inputs: list[str] = ["-i", str(base_path)]
     for ov in overlays:
         ov_path = resolve_path(ov["file"], edit_dir)
-        inputs += ["-i", str(ov_path)]
+        inputs += [*alpha_decoder(ov_path), "-i", str(ov_path)]
 
     filter_parts: list[str] = []
     # PTS-shift every overlay so its frame 0 lands at start_in_output
