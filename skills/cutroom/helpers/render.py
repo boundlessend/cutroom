@@ -827,8 +827,12 @@ def build_final_composite(
     subtitles_path: Path | None,
     out_path: Path,
     edit_dir: Path,
+    canvas: tuple[int, int],
 ) -> None:
     """Final pass: base → overlays (PTS-shifted) → designed ASS titles → subtitles LAST → out.
+
+    Overlays are full-frame animations: each is scaled to the canvas, so one rendered
+    at 1080p still lines up on a 720p draft.
 
     The EDL's `ass` file is burned as written: unlike subtitles it gets no
     force_style, so its own fonts, positions and animation tags survive.
@@ -845,9 +849,10 @@ def build_final_composite(
 
     filter_parts: list[str] = []
     # PTS-shift every overlay so its frame 0 lands at start_in_output
+    w, h = canvas
     for idx, ov in enumerate(overlays, start=1):
         t = float(ov["start_in_output"])
-        filter_parts.append(f"[{idx}:v]setpts=PTS-STARTPTS+{t}/TB[a{idx}]")
+        filter_parts.append(f"[{idx}:v]scale={w}:{h},setpts=PTS-STARTPTS+{t}/TB[a{idx}]")
 
     # Chain overlays on top of base
     current = "[0:v]"
@@ -988,7 +993,7 @@ def main() -> None:
     # 3. Composite (overlays + ASS titles + subtitles LAST), audio still PCM
     if overlays or ass_path or subs_path:
         composite_path = out_path.with_suffix(".composite.mov")
-        build_final_composite(base_path, overlays, ass_path, subs_path, composite_path, edit_dir)
+        build_final_composite(base_path, overlays, ass_path, subs_path, composite_path, edit_dir, canvas)
     else:
         composite_path = base_path
 
