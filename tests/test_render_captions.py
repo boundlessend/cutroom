@@ -67,10 +67,27 @@ class BuildMasterSrtTests(unittest.TestCase):
             (edit / "transcripts" / "C0103.json").write_text(json.dumps({"words": TAKE}))
             edl = {"sources": {"C0103": "C0103.mp4"}, "ranges": [{"source": "C0103", "start": 2.55, "end": 6.8}]}
             out = edit / "master.srt"
-            render.build_master_srt(edl, edit, out)
+            render.build_master_srt(edl, edit, out, "30/1")
             cues = [b.splitlines() for b in out.read_text().strip().split("\n\n")]
             self.assertEqual([c[2] for c in cues], ["90% OF", "WHAT A WEB", "AGENT DOES", "IS COMPLETELY", "WASTED.", "WE FIX THIS."])
             self.assertEqual(cues[0][1], "00:00:00,090 --> 00:00:00,590")
+
+    def test_offsets_follow_whole_frame_segments(self):
+        # 4.44 s at 30 fps renders as 133 frames = 4.4333 s; the next cue must start
+        # after the rendered segment, not after the EDL range (the old 1-frame-per-cut drift)
+        with tempfile.TemporaryDirectory() as d:
+            edit = Path(d)
+            (edit / "transcripts").mkdir()
+            (edit / "transcripts" / "C0103.json").write_text(json.dumps({"words": TAKE}))
+            edl = {"sources": {"C0103": "C0103.mp4"}, "ranges": [
+                {"source": "C0103", "start": 0.0, "end": 4.44},
+                {"source": "C0103", "start": 6.08, "end": 6.8},
+            ]}
+            out = edit / "master.srt"
+            render.build_master_srt(edl, edit, out, "30/1")
+            last = out.read_text().strip().split("\n\n")[-1].splitlines()
+            self.assertEqual(last[2], "WE FIX THIS.")
+            self.assertTrue(last[1].startswith("00:00:04,433 -->"), last[1])
 
 
 class SubtitlesPathTests(unittest.TestCase):

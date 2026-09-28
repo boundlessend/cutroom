@@ -2,7 +2,8 @@
 
 Implements the HEURISTICS render pipeline in the correct order:
 
-  1. Per-segment extract with color grade + 30ms audio fades baked in
+  1. Per-segment extract with color grade + 30ms audio fades baked in, each
+     range cut to whole frames
   2. Lossless -c copy concat into base.mp4
   3. If overlays or subtitles: single filter graph that overlays animations
      (with PTS shift so frame 0 lands at the overlay window start)
@@ -242,23 +243,83 @@ def probe_source_fps(video: Path) -> str | None:
     return None
 
 
+def resolve_output_rate(edl: dict, edit_dir: Path, fps: str | None) -> str:
+    """ONE output frame rate for the whole render.
+
+    The lossless concat (Rule 2, `-c copy`) requires all segments to share a
+    frame rate; probing per-segment would diverge for multi-source EDLs that mix
+    rates (e.g. a 30fps and a 60fps source) and break the concat. Explicit --fps
+    wins; otherwise preserve the first source's rate, 24 if it can't be probed.
+    """
+    if fps is not None:
+        return parse_fps(str(fps))
+    ranges = edl["ranges"]
+    if not ranges:
+        return "24"
+    first_src = resolve_path(edl["sources"][ranges[0]["source"]], edit_dir)
+    return probe_source_fps(first_src) or "24"
+
+
+# -------- Output timeline (frame-quantized) ----------------------------------
+#
+# A segment can only hold whole frames. Extracting `-t 4.44` at 30 fps gives 134
+# frames (4.467 s) of video next to 4.440 s of audio, and every EDL range adds up
+# to one frame of drift: 62 ranges put captions 1.2 s late by the end. So every
+# range is cut to a whole number of frames, and every output-time computation
+# (master SRT, overlays, titles) uses the same quantized durations.
+
+
+def segment_frames(start: float, end: float, rate: str) -> int:
+    """Whole frames a range occupies in the output."""
+    return max(1, round((end - start) * Fraction(rate)))
+
+
+def segment_duration(start: float, end: float, rate: str) -> float:
+    return float(segment_frames(start, end, rate) / Fraction(rate))
+
+
+def output_offsets(edl: dict, rate: str) -> list[float]:
+    """Output-timeline start of every EDL range."""
+    offsets: list[float] = []
+    t = 0.0
+    for r in edl["ranges"]:
+        offsets.append(t)
+        t += segment_duration(float(r["start"]), float(r["end"]), rate)
+    return offsets
+
+
+def source_to_output(edl: dict, rate: str, source: str, t: float) -> float:
+    """Map a source timestamp to the output timeline. A cut-out moment is an error."""
+    for r, offset in zip(edl["ranges"], output_offsets(edl, rate)):
+        start = float(r["start"])
+        if r["source"] == source and start <= t < start + segment_duration(start, float(r["end"]), rate):
+            return offset + (t - start)
+    raise ValueError(f"{source} @ {t:.3f}s is not inside any EDL range (cut out)")
+
+
 # -------- Per-segment extraction (Rule 2 + Rule 3) --------------------------
 
 
 def extract_segment(
     source: Path,
     seg_start: float,
-    duration: float,
+    frames: int,
     grade_filter: str,
     out_path: Path,
-    preview: bool = False,
-    draft: bool = False,
-    rate: str | None = None,
+    *,
+    preview: bool,
+    draft: bool,
+    rate: str,
+    audio_track: int,
 ) -> None:
     """Extract a cut range as its own MP4 with grade + 30ms audio fades baked in.
 
     `-ss` before `-i` for fast accurate seeking. Scale to 1080p from 4K.
     Portrait sources (height > width) are scaled by height to preserve orientation.
+    Video is capped at exactly `frames` frames and audio at the same duration, so
+    the segment is as long as `segment_duration()` says and the timeline adds up.
+    Streams are mapped explicitly: an iPhone file carries stereo AAC next to
+    spatial APAC, and ffmpeg's default pick is the stream with the most channels.
 
     Quality ladder:
       - final (default): 1080p libx264 fast CRF 20
@@ -266,6 +327,7 @@ def extract_segment(
       - draft:           720p libx264 ultrafast CRF 28 (cut-point check only)
     """
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    duration = float(frames / Fraction(rate))
 
     portrait = is_portrait_source(source)
     if draft:
@@ -292,21 +354,17 @@ def extract_segment(
     else:
         preset, crf = "fast", "20"
 
-    # Frame rate: use the rate the caller resolved once for the whole render
-    # (every segment must share it — concat -c copy in Rule 2 requires a uniform
-    # frame rate). When called standalone with no rate, preserve this source's
-    # own rate; fall back to 24 only if it can't be probed.
-    out_rate = rate if rate is not None else (probe_source_fps(source) or "24")
-
     cmd = [
         "ffmpeg", "-y",
         "-ss", f"{seg_start:.3f}",
         "-i", str(source),
-        "-t", f"{duration:.3f}",
+        "-t", f"{duration:.6f}",
+        "-map", "0:v:0", "-map", f"0:a:{audio_track}",
         "-vf", vf,
         "-af", af,
+        "-frames:v", str(frames),
         "-c:v", "libx264", "-preset", preset, "-crf", crf,
-        "-pix_fmt", "yuv420p", "-r", out_rate,
+        "-pix_fmt", "yuv420p", "-r", rate,
         "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
         "-movflags", "+faststart",
         str(out_path),
@@ -337,19 +395,8 @@ def extract_all_segments(
 
     ranges = edl["ranges"]
     sources = edl["sources"]
-
-    # Resolve ONE output frame rate for the entire render and apply it to every
-    # segment. The lossless concat (Rule 2, `-c copy`) requires all segments to
-    # share a frame rate; probing per-segment would diverge for multi-source
-    # EDLs that mix rates (e.g. a 30fps and a 60fps source) and break the concat.
-    # Explicit --fps wins; otherwise preserve the first source's rate.
-    if fps is not None:
-        out_rate = parse_fps(str(fps))
-    elif ranges:
-        first_src = resolve_path(sources[ranges[0]["source"]], edit_dir)
-        out_rate = probe_source_fps(first_src) or "24"
-    else:
-        out_rate = "24"
+    audio_track = int(edl.get("audio_track", 0))
+    out_rate = resolve_output_rate(edl, edit_dir, fps)
 
     seg_paths: list[Path] = []
     print(f"extracting {len(ranges)} segment(s) → {clips_dir.name}/  @ {out_rate} fps"
@@ -361,8 +408,8 @@ def extract_all_segments(
         src_path = resolve_path(sources[src_name], edit_dir)
         start = float(r["start"])
         end = float(r["end"])
-        duration = end - start
-        out_path = clips_dir / f"seg_{i:02d}_{src_name}.mp4"
+        frames = segment_frames(start, end, out_rate)
+        duration = segment_duration(start, end, out_rate)
 
         if is_auto:
             seg_filter, _stats = auto_grade_for_clip(src_path, start=start, duration=duration, verbose=False)
@@ -372,11 +419,13 @@ def extract_all_segments(
         if r.get("vf"):
             seg_filter = ",".join(f for f in (seg_filter, r["vf"]) if f)
 
+        out_path = clips_dir / f"seg_{i:02d}_{src_name}.mp4"
         note = r.get("beat") or r.get("note") or ""
         print(f"  [{i:02d}] {src_name}  {start:7.2f}-{end:7.2f}  ({duration:5.2f}s)  {note}")
         if is_auto:
             print(f"        grade: {seg_filter or '(none)'}")
-        extract_segment(src_path, start, duration, seg_filter, out_path, preview=preview, draft=draft, rate=out_rate)
+        extract_segment(src_path, start, frames, seg_filter, out_path,
+                        preview=preview, draft=draft, rate=out_rate, audio_track=audio_track)
         seg_paths.append(out_path)
 
     return seg_paths
@@ -468,15 +517,15 @@ def chunk_words(words: list[dict]) -> list[list[dict]]:
     return chunks
 
 
-def build_master_srt(edl: dict, edit_dir: Path, out_path: Path) -> None:
+def build_master_srt(edl: dict, edit_dir: Path, out_path: Path, rate: str) -> None:
     """Build an output-timeline SRT from per-source transcripts.
 
     - phrase-aware ~2-word chunks (see chunk_words)
     - UPPERCASE text
-    - Output times computed as word.start - segment_start + segment_offset
+    - Output times computed as word.start - segment_start + segment_offset,
+      offsets from the frame-quantized segment durations the render produces
     """
     transcripts_dir = edit_dir / "transcripts"
-    sources = edl["sources"]
 
     entries: list[tuple[float, float, str]] = []
     seg_offset = 0.0
@@ -484,8 +533,8 @@ def build_master_srt(edl: dict, edit_dir: Path, out_path: Path) -> None:
     for r in edl["ranges"]:
         src_name = r["source"]
         seg_start = float(r["start"])
-        seg_end = float(r["end"])
-        seg_duration = seg_end - seg_start
+        seg_duration = segment_duration(seg_start, float(r["end"]), rate)
+        seg_end = seg_start + seg_duration
 
         tr_path = transcripts_dir / f"{src_name}.json"
         if not tr_path.exists():
@@ -764,6 +813,8 @@ def main() -> None:
     edit_dir = edl_path.parent
     out_path = args.output.resolve()
 
+    rate = resolve_output_rate(edl, edit_dir, args.fps)
+
     # 1. Extract per-segment (auto-grade per range if EDL grade is "auto")
     segment_paths = extract_all_segments(
         edl, edit_dir, preview=args.preview, draft=args.draft, fps=args.fps
@@ -784,7 +835,7 @@ def main() -> None:
     if not args.no_subtitles:
         if args.build_subtitles:
             subs_path = edit_dir / "master.srt"
-            build_master_srt(edl, edit_dir, subs_path)
+            build_master_srt(edl, edit_dir, subs_path, rate)
         elif edl.get("subtitles"):
             subs_path = resolve_subtitles_path(edl["subtitles"], edit_dir)
 
