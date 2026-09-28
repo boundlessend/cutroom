@@ -532,6 +532,11 @@ def build_master_srt(edl: dict, edit_dir: Path, out_path: Path) -> None:
 LOUDNORM_I = -14.0
 LOUDNORM_TP = -1.0
 LOUDNORM_LRA = 11.0
+# The AAC encode after loudnorm raises true peak by ~0.4 dB (measured: -0.9 dBTP
+# out of loudnorm, -0.5 after AAC 192k). Limit lower so the delivered file meets
+# LOUDNORM_TP; -1.5 measured -1.1 after AAC on a speech track.
+AAC_TP_HEADROOM = 0.5
+LIMITER_TP = LOUDNORM_TP - AAC_TP_HEADROOM
 
 
 def measure_loudness(video_path: Path) -> dict[str, str] | None:
@@ -541,7 +546,7 @@ def measure_loudness(video_path: Path) -> dict[str, str] | None:
     target_offset, or None if measurement failed.
     """
     filter_str = (
-        f"loudnorm=I={LOUDNORM_I}:TP={LOUDNORM_TP}:LRA={LOUDNORM_LRA}:print_format=json"
+        f"loudnorm=I={LOUDNORM_I}:TP={LIMITER_TP}:LRA={LOUDNORM_LRA}:print_format=json"
     )
     cmd = [
         "ffmpeg", "-y", "-hide_banner", "-nostats",
@@ -583,7 +588,7 @@ def apply_loudnorm_two_pass(
     """
     if preview:
         # One-pass approximation — faster, slightly less accurate.
-        filter_str = f"loudnorm=I={LOUDNORM_I}:TP={LOUDNORM_TP}:LRA={LOUDNORM_LRA}"
+        filter_str = f"loudnorm=I={LOUDNORM_I}:TP={LIMITER_TP}:LRA={LOUDNORM_LRA}"
         cmd = [
             "ffmpeg", "-y", "-hide_banner", "-nostats",
             "-i", str(input_path),
@@ -608,7 +613,7 @@ def apply_loudnorm_two_pass(
           f"TP={measurement['input_tp']}  LRA={measurement['input_lra']}")
 
     filter_str = (
-        f"loudnorm=I={LOUDNORM_I}:TP={LOUDNORM_TP}:LRA={LOUDNORM_LRA}"
+        f"loudnorm=I={LOUDNORM_I}:TP={LIMITER_TP}:LRA={LOUDNORM_LRA}"
         f":measured_I={measurement['input_i']}"
         f":measured_TP={measurement['input_tp']}"
         f":measured_LRA={measurement['input_lra']}"
@@ -792,7 +797,8 @@ def main() -> None:
         # Composite to a temp file, then run loudnorm → final output
         tmp_composite = out_path.with_suffix(".prenorm.mp4")
         build_final_composite(base_path, overlays, subs_path, tmp_composite, edit_dir)
-        print("loudness normalization → social-ready (-14 LUFS / -1 dBTP / LRA 11)")
+        print(f"loudness normalization → social-ready ({LOUDNORM_I:g} LUFS / {LOUDNORM_TP:g} dBTP "
+              f"delivered, limiter at {LIMITER_TP:g} / LRA {LOUDNORM_LRA:g})")
         apply_loudnorm_two_pass(tmp_composite, out_path, preview=args.draft)
         tmp_composite.unlink(missing_ok=True)
 
