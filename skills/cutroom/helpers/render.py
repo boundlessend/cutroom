@@ -370,8 +370,10 @@ def extract_segment(
 
     # The output rate first: a reframe `vf` times its motion by the frame counter
     # `on`, which otherwise counts source frames (a 60 fps source rendered at 30
-    # ran every move at double speed).
-    vf_parts: list[str] = [f"fps={rate}"]
+    # ran every move at double speed). start_time=0: after -ss the first source
+    # frame can land a few ms past 0, and without it the segment starts a frame
+    # late, leaving a hole at the join and the picture 33 ms behind its sound.
+    vf_parts: list[str] = [f"fps={rate}:start_time=0"]
     if is_hdr_source(source):
         vf_parts.append(TONEMAP_CHAIN)
     vf_parts.append(fit)
@@ -428,7 +430,7 @@ def extract_segment(
 
 
 # Bump when the extract command changes: it invalidates every cached segment.
-EXTRACT_VERSION = 3
+EXTRACT_VERSION = 4
 
 
 def segment_cache_key(
