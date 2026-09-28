@@ -241,6 +241,9 @@ def main() -> None:
     ap.add_argument("--topic", type=float, action="append", default=[], help="Source time where a new subject starts")
     ap.add_argument("--audio-track", type=int, default=0, help="Audio track for the loud-gap audit (default 0)")
     args = ap.parse_args()
+    if args.gap <= args.pad_before + args.pad_after:
+        ap.error(f"--gap {args.gap:g} must exceed --pad-before + --pad-after ({args.pad_before + args.pad_after:g}): "
+                 "a shorter pause keeps more padding than it has, and its two ranges overlap and repeat the sound")
 
     video = args.video.resolve()
     if not video.exists():
