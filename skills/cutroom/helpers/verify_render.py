@@ -32,7 +32,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from render import output_offsets, probe_source_fps, segment_duration
+from render import loudness, output_offsets, probe_source_fps, segment_duration
 from transcribe import extract_audio
 from transcribe_local import run_whisper
 
@@ -87,19 +87,6 @@ def seams_and_edges(video: Path, cuts: list[float], fps: float, sheet_path: Path
     sheet_path.parent.mkdir(parents=True, exist_ok=True)
     sheet.save(sheet_path)
     return dark
-
-
-def loudness(video: Path) -> tuple[float, float]:
-    err = subprocess.run(
-        ["ffmpeg", "-hide_banner", "-nostats", "-i", str(video), "-af", "ebur128=peak=true", "-f", "null", "-"],
-        capture_output=True, text=True,
-    ).stderr
-    summary = err[err.rfind("Summary"):]
-    i_match = re.search(r"I:\s+(-?[\d.]+)", summary)
-    peak_match = re.search(r"Peak:\s+(-?[\d.]+)", summary)
-    if i_match is None or peak_match is None:
-        raise RuntimeError(f"ebur128 printed no summary for {video}: {err[-800:]}")
-    return float(i_match[1]), float(peak_match[1])
 
 
 def norm(word: str) -> str:

@@ -723,21 +723,38 @@ def build_master_srt(edl: dict, edit_dir: Path, out_path: Path, rate: str) -> No
 LOUDNORM_I = -14.0
 LOUDNORM_TP = -1.0
 LOUDNORM_LRA = 11.0
-# The AAC encode after loudnorm raises true peak by 0.3–0.9 dB depending on the
-# material (measured on one speech track rendered twice: limiter -1.5 gave -1.1
-# and -0.7 dBTP after AAC 192k; limiter -2.0 gave -1.0 and -1.1). Limit lower so
-# the delivered file meets LOUDNORM_TP.
+# The AAC encode after loudnorm raises true peak by 0.3–1.1 dB depending on the
+# material (limiter -2.0 gave -1.0 and -1.1 on one speech track, -0.9 on a 5:26
+# cut). Limit lower so most files meet LOUDNORM_TP on the first encode;
+# apply_loudnorm_two_pass measures the delivered file and lowers it further if not.
 AAC_TP_HEADROOM = 1.0
 LIMITER_TP = LOUDNORM_TP - AAC_TP_HEADROOM
-# loudnorm's own limiter does not hold its TP target when it falls back to
-# dynamic mode on a short file (a 54 s part needing +6.4 dB came out at
-# -0.3 dBTP). loudnorm emits 192 kHz, where sample peaks approximate true
-# peaks, so a brickwall there, before the drop to 48 kHz, holds it: the same
-# part then measured -1.5 dBTP after AAC, loudness unchanged.
-TP_GUARD = (
-    f",alimiter=limit={10 ** (LIMITER_TP / 20):.4f}:level=false:attack=1:release=50"
-    ",aresample=48000"
-)
+
+
+def tp_guard(limit_db: float) -> str:
+    """Brickwall at `limit_db`, then down to 48 kHz. loudnorm's own limiter does not
+    hold its TP target when it falls back to dynamic mode on a short file (a 54 s
+    part needing +6.4 dB came out at -0.3 dBTP). loudnorm emits 192 kHz, where
+    sample peaks approximate true peaks, so a brickwall there holds it."""
+    return (
+        f",alimiter=limit={10 ** (limit_db / 20):.4f}:level=false:attack=1:release=50"
+        ",aresample=48000"
+    )
+
+
+def loudness(video: Path) -> tuple[float, float]:
+    """Integrated loudness (LUFS) and true peak (dBTP) of a file's first audio stream."""
+    err = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-nostats", "-i", str(video), "-map", "0:a:0",
+         "-af", "ebur128=peak=true", "-f", "null", "-"],
+        capture_output=True, text=True,
+    ).stderr
+    summary = err[err.rfind("Summary"):]
+    i_match = re.search(r"I:\s+(-?[\d.]+)", summary)
+    peak_match = re.search(r"Peak:\s+(-?[\d.]+)", summary)
+    if i_match is None or peak_match is None:
+        raise RuntimeError(f"ebur128 printed no summary for {video}: {err[-800:]}")
+    return float(i_match[1]), float(peak_match[1])
 
 
 def measure_loudness(video_path: Path) -> dict[str, str] | None:
@@ -778,63 +795,58 @@ def apply_loudnorm_two_pass(
     input_path: Path,
     output_path: Path,
     preview: bool = False,
-) -> bool:
-    """Run two-pass loudnorm on input_path, write normalized copy to output_path.
+) -> None:
+    """Two-pass loudnorm of input_path into output_path, with the one AAC encode.
 
-    Returns True on success, False if measurement failed (caller should fall
-    back to copying the input unchanged).
-
-    In preview mode, skips the measurement pass and uses a one-pass approximation
-    for speed. Final mode always does the proper two-pass.
+    In preview mode (render --draft) the measurement pass is skipped for a
+    one-pass approximation. The delivered true peak is measured after the AAC
+    encode, which adds 0.3-1.1 dB: a 5:26 render with the limiter at -2 still
+    came out at -0.9 dBTP. If it is over LOUDNORM_TP, the encode is redone with
+    the limiter lowered by the overshoot.
     """
     if preview:
-        # One-pass approximation — faster, slightly less accurate.
-        filter_str = f"loudnorm=I={LOUDNORM_I}:TP={LIMITER_TP}:LRA={LOUDNORM_LRA}" + TP_GUARD
-        cmd = [
+        loudnorm = f"loudnorm=I={LOUDNORM_I}:TP={LIMITER_TP}:LRA={LOUDNORM_LRA}"
+        print(f"  loudnorm (1-pass preview) → {output_path.name}")
+    else:
+        print(f"  loudnorm pass 1: measuring {input_path.name}")
+        measurement = measure_loudness(input_path)
+        if measurement is None:
+            print("  loudnorm measurement failed — falling back to 1-pass")
+            apply_loudnorm_two_pass(input_path, output_path, preview=True)
+            return
+        print(f"    measured: I={measurement['input_i']} LUFS  "
+              f"TP={measurement['input_tp']}  LRA={measurement['input_lra']}")
+        loudnorm = (
+            f"loudnorm=I={LOUDNORM_I}:TP={LIMITER_TP}:LRA={LOUDNORM_LRA}"
+            f":measured_I={measurement['input_i']}"
+            f":measured_TP={measurement['input_tp']}"
+            f":measured_LRA={measurement['input_lra']}"
+            f":measured_thresh={measurement['input_thresh']}"
+            f":offset={measurement['target_offset']}"
+            f":linear=true"
+        )
+        print(f"  loudnorm pass 2: normalizing → {output_path.name}")
+
+    limit = LIMITER_TP
+    for _ in range(3):
+        ffmpeg([
             "ffmpeg", "-y", "-hide_banner", "-nostats",
             "-i", str(input_path),
             "-c:v", "copy",
-            "-af", filter_str,
+            "-af", loudnorm + tp_guard(limit),
             "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
             "-movflags", "+faststart",
             str(output_path),
-        ]
-        print(f"  loudnorm (1-pass preview) → {output_path.name}")
-        ffmpeg(cmd)
-        return True
+        ])
+        _, tp = loudness(output_path)
+        if tp <= LOUDNORM_TP:
+            return
+        print(f"  true peak {tp:.1f} dBTP after AAC with the limiter at {limit:.1f}, over {LOUDNORM_TP:g}: re-encoding")
+        limit -= tp - LOUDNORM_TP + 0.2
+    raise RuntimeError(f"true peak of {output_path} is still {tp:.1f} dBTP after 3 encodes, over {LOUDNORM_TP:g}")
 
-    # Full two-pass
-    print(f"  loudnorm pass 1: measuring {input_path.name}")
-    measurement = measure_loudness(input_path)
-    if measurement is None:
-        print("  loudnorm measurement failed — falling back to 1-pass")
-        return apply_loudnorm_two_pass(input_path, output_path, preview=True)
 
-    print(f"    measured: I={measurement['input_i']} LUFS  "
-          f"TP={measurement['input_tp']}  LRA={measurement['input_lra']}")
-
-    filter_str = (
-        f"loudnorm=I={LOUDNORM_I}:TP={LIMITER_TP}:LRA={LOUDNORM_LRA}"
-        f":measured_I={measurement['input_i']}"
-        f":measured_TP={measurement['input_tp']}"
-        f":measured_LRA={measurement['input_lra']}"
-        f":measured_thresh={measurement['input_thresh']}"
-        f":offset={measurement['target_offset']}"
-        f":linear=true"
-        + TP_GUARD
-    )
-    cmd = [
-        "ffmpeg", "-y", "-hide_banner", "-nostats",
-        "-i", str(input_path),
-        "-c:v", "copy",
-        "-af", filter_str,
-        "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
-        "-movflags", "+faststart",
-        str(output_path),
-    ]
-    print(f"  loudnorm pass 2: normalizing → {output_path.name}")
-    ffmpeg(cmd)
-    return True
+# -------- Final compositing (Rule 1 + Rule 4) -------------------------------
 
 
 def alpha_decoder(overlay: Path) -> list[str]:
@@ -870,9 +882,6 @@ def encode_audio(input_path: Path, output_path: Path) -> None:
         "-movflags", "+faststart",
         str(output_path),
     ])
-
-
-# -------- Final compositing (Rule 1 + Rule 4) -------------------------------
 
 
 def build_final_composite(
