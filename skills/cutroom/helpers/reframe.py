@@ -84,7 +84,8 @@ def expressions(m: Move, fps: float) -> tuple[str, str, str]:
     e_drift = ease_in_out(phase(t, *span)) if span else "0"
     e_push = f"pow({phase(t, m.last - m.push_out, m.last)},3)" if m.push_out > 0 else "0"
     base = f"({m.target.z}*(1+{m.drift}*{e_drift}))"
-    z = f"(({m.start.z}+({base}-{m.start.z})*{e_settle})*(1+{m.push_amp}*{e_push}))"
+    # a pull-out drift on a slightly zoomed shot would dip below 1 and sample outside the frame
+    z = f"max(1,(({m.start.z}+({base}-{m.start.z})*{e_settle})*(1+{m.push_amp}*{e_push})))"
     ax = f"({m.start.ax}+({m.target.ax}-{m.start.ax})*{e_settle})"
     ay = f"({m.start.ay}+({m.target.ay}-{m.start.ay})*{e_settle})"
     return z, ax, ay
@@ -94,7 +95,7 @@ def end_frame(m: Move) -> Frame:
     z = m.target.z * (1 + (m.drift if drift_span(m) else 0.0))
     if m.push_out > 0:
         z *= 1 + m.push_amp
-    return Frame(z, m.target.ax, m.target.ay)
+    return Frame(max(1.0, z), m.target.ax, m.target.ay)
 
 
 def perspective_filter(z: str, ax: str, ay: str) -> str:
