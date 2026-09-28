@@ -623,6 +623,15 @@ LOUDNORM_LRA = 11.0
 # the delivered file meets LOUDNORM_TP.
 AAC_TP_HEADROOM = 1.0
 LIMITER_TP = LOUDNORM_TP - AAC_TP_HEADROOM
+# loudnorm's own limiter does not hold its TP target when it falls back to
+# dynamic mode on a short file (a 54 s part needing +6.4 dB came out at
+# -0.3 dBTP). loudnorm emits 192 kHz, where sample peaks approximate true
+# peaks, so a brickwall there, before the drop to 48 kHz, holds it: the same
+# part then measured -1.5 dBTP after AAC, loudness unchanged.
+TP_GUARD = (
+    f",alimiter=limit={10 ** (LIMITER_TP / 20):.4f}:level=false:attack=1:release=50"
+    ",aresample=48000"
+)
 
 
 def measure_loudness(video_path: Path) -> dict[str, str] | None:
@@ -674,7 +683,7 @@ def apply_loudnorm_two_pass(
     """
     if preview:
         # One-pass approximation — faster, slightly less accurate.
-        filter_str = f"loudnorm=I={LOUDNORM_I}:TP={LIMITER_TP}:LRA={LOUDNORM_LRA}"
+        filter_str = f"loudnorm=I={LOUDNORM_I}:TP={LIMITER_TP}:LRA={LOUDNORM_LRA}" + TP_GUARD
         cmd = [
             "ffmpeg", "-y", "-hide_banner", "-nostats",
             "-i", str(input_path),
@@ -706,6 +715,7 @@ def apply_loudnorm_two_pass(
         f":measured_thresh={measurement['input_thresh']}"
         f":offset={measurement['target_offset']}"
         f":linear=true"
+        + TP_GUARD
     )
     cmd = [
         "ffmpeg", "-y", "-hide_banner", "-nostats",
