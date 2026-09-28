@@ -500,7 +500,10 @@ def concat_segments(segment_paths: list[Path], out_path: Path) -> None:
     """Lossless concat via the concat demuxer. No re-encode; the audio is still PCM."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
     concat_list = out_path.with_suffix(".concat.txt")
-    concat_list.write_text("".join(f"file '{p.resolve()}'\n" for p in segment_paths))
+    # a quote inside a quoted concat path is written as '\''
+    concat_list.write_text("".join(
+        "file '" + str(p.resolve()).replace("'", r"'\''") + "'\n" for p in segment_paths
+    ))
 
     cmd = [
         "ffmpeg", "-y",
@@ -756,6 +759,14 @@ def apply_loudnorm_two_pass(
     return True
 
 
+def filter_path(path: Path) -> str:
+    """A path as a filter option value, escaped once for the option parser and once
+    for the filtergraph (ffmpeg-filters, "Notes on filtergraph escaping"). Quoting
+    alone breaks on a path with an apostrophe in it."""
+    option_level = re.sub(r"([\\':])", r"\\\1", str(path.resolve()))
+    return re.sub(r"([\\'\[\],;])", r"\\\1", option_level)
+
+
 def encode_audio(input_path: Path, output_path: Path) -> None:
     """Copy the video and encode the PCM mix to AAC (the --no-loudnorm path)."""
     ffmpeg([
@@ -811,16 +822,14 @@ def build_final_composite(
         )
         current = next_label
 
-    if has_ass:
-        ass_abs = str(ass_path.resolve()).replace(":", r"\:").replace("'", r"\'")
-        filter_parts.append(f"{current}ass='{ass_abs}'[vass]")
+    if ass_path is not None:
+        filter_parts.append(f"{current}ass={filter_path(ass_path)}[vass]")
         current = "[vass]"
 
     # Subtitles LAST — Rule 1
-    if has_subs:
-        subs_abs = str(subtitles_path.resolve()).replace(":", r"\:").replace("'", r"\'")
+    if subtitles_path is not None and has_subs:
         filter_parts.append(
-            f"{current}subtitles='{subs_abs}':force_style='{SUB_FORCE_STYLE}'[outv]"
+            f"{current}subtitles={filter_path(subtitles_path)}:force_style='{SUB_FORCE_STYLE}'[outv]"
         )
         out_label = "[outv]"
     else:
