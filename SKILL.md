@@ -1,6 +1,6 @@
 ---
 name: video-use
-description: Edit any video by conversation. Transcribe, cut, color grade, generate overlay animations, burn subtitles - for talking heads, montages, tutorials, travel, interviews. No presets, no menus. Ask questions, confirm the plan, execute, iterate, persist. Production-correctness rules are hard; everything else is artistic freedom. Русские триггеры - «смонтируй видео», «нарежь видео», «собери ролик из дублей», «склей дубли», «вшей субтитры», «сделай цветокор», «наложи анимацию на видео». NOT for merely watching a video or pulling its transcript to answer questions about it - that is the watch skill; transcription here is a paid ElevenLabs call.
+description: Edit any video by conversation. Transcribe, cut, color grade, generate overlay animations, burn subtitles - for talking heads, montages, tutorials, travel, interviews. No presets, no menus. Ask questions, confirm the plan, execute, iterate, persist. Production-correctness rules are hard; everything else is artistic freedom. Русские триггеры - «смонтируй видео», «нарежь видео», «собери ролик из дублей», «склей дубли», «вшей субтитры», «сделай цветокор», «наложи анимацию на видео». NOT for merely watching a video or pulling its transcript to answer questions about it - that is the watch skill; transcription here is a paid ElevenLabs call, or free and local via mlx-whisper.
 ---
 
 # Video Use
@@ -23,7 +23,7 @@ These are the things where deviation produces silent failures or broken output. 
 2. **Per-segment extract → lossless `-c copy` concat**, not single-pass filtergraph. Otherwise you double-encode every segment when overlays are added.
 3. **30ms audio fades at every segment boundary** (`afade=t=in:st=0:d=0.03,afade=t=out:st={dur-0.03}:d=0.03`). Otherwise audible pops at every cut.
 4. **Overlays use `setpts=PTS-STARTPTS+T/TB`** to shift the overlay's frame 0 to its window start. Otherwise you see the middle of the animation during the overlay window.
-5. **Master SRT uses output-timeline offsets**: `output_time = word.start - segment_start + segment_offset`. Otherwise captions misalign after segment concat.
+5. **Master SRT uses output-timeline offsets**: `output_time = word.start - segment_start + segment_offset`. Otherwise captions misalign after segment concat. Offsets come from the rendered, whole-frame segment durations, not from EDL `end - start`: `render.py` cuts every range to `round(duration × fps)` frames, and summing raw EDL durations drifts about a frame per cut (1.2 s after 62 ranges). Anything else timed to the output (titles, overlays) goes through `render.source_to_output(edl, rate, source, t)`.
 6. **Never cut inside a word.** Snap every cut edge to a word boundary from the Scribe transcript.
 7. **Pad every cut edge.** Working window: 30–200ms. Scribe timestamps drift 50–100ms — padding absorbs the drift. Tighter for fast-paced, looser for cinematic.
 8. **Word-level verbatim ASR only.** Never SRT/phrase mode (loses sub-second gap data). Never normalized fillers (loses editorial signal).
@@ -79,10 +79,13 @@ print `--help` under it anyway, which makes a broken environment look healthy.
 
 - **`transcribe.py <video>`** — single-file Scribe call. `--num-speakers N` optional. Cached.
 - **`transcribe_batch.py <videos_dir>`** — 4-worker parallel transcription. Use for multi-take.
-- **`transcribe_local.py <video_or_dir> --language ru|en`** — free local alternative to Scribe via the `mlx_whisper` CLI (whisper-large-v3-turbo on the Apple GPU), writes the same Scribe-shaped JSON into the same cache, no cost confirmation. No diarization and no audio events; a filler prompt keeps most "эм"/"э-э", not all, so read around suspicious gaps with `timeline_view`. Word edges are looser than Scribe's: pad cuts toward the top of the window.
+- **`transcribe_local.py <video_or_dir> --language ru|en`** — free local alternative to Scribe via the `mlx_whisper` CLI (whisper-large-v3-turbo on the Apple GPU), writes the same Scribe-shaped JSON into the same cache, no cost confirmation. No diarization and no audio events; a filler prompt keeps most "эм"/"э-э" in the text, but mumbled ones fall into the gaps between words: `tighten.py` flags gaps with speech-level audio. Word edges are looser than Scribe's (a word onset measured 40 ms before Whisper's timestamp): pad cuts toward the top of the window.
 - **`pack_transcripts.py --edit-dir <dir>`** — `transcripts/*.json` → `takes_packed.md` (phrase-level, break on silence ≥ 0.5s).
-- **`timeline_view.py <video> <start> <end>`** — filmstrip + waveform PNG. On-demand visual drill-down. **Not a scan tool** — use it at decision points, not constantly.
-- **`render.py <edl.json> -o <out>`** — per-segment extract → concat → overlays (PTS-shifted) → subtitles LAST. `--preview` is 1080p / medium / CRF 22 (QC-grade), `--draft` is 720p / ultrafast / CRF 28 (cut-point check only). `--build-subtitles` to generate master.srt inline. Loudness normalization to -14 LUFS is ON by default, `--no-loudnorm` turns it off. The source frame rate is preserved unless `--fps` overrides it. `"grade": "auto"` in the EDL grades every range from its own frames.
+- **`tighten.py <video> -o <edit>/edl.json`** — EDL skeleton for one source: every pause ≥ `--gap` (0.45) cut, ranges padded `--pad-before`/`--pad-after` (0.10/0.14), `--remove START-END` for retakes and slips, `--topic T` for subject changes (split there, range marked `"topic": true`). Ranges under 0.8 s merge into their predecessor; ranges over 9 s split at sentence ends without removing time. Audits every cut pause for speech-level audio and lists the loud ones: those are words the ASR dropped.
+- **`timeline_view.py <video> <start> <end>`** — filmstrip + waveform PNG. On-demand visual drill-down. **Not a scan tool** — use it at decision points, not constantly. `--edl <edl.json>` draws every range as first/middle/last source frame on one sheet (`verify/edl_ranges.png`): the view for deciding shot sizes before rendering.
+- **`reframe.py <edl.json> -o <edl.json>`** — writes each range's `vf` from its `frame` target (`{"z", "ax", "ay"}`): continuous zoom across cuts, eased settle, slow drift, push-in before a `topic` range. See Cut craft → Reframing.
+- **`render.py <edl.json> -o <out>`** — per-segment extract → concat → overlays (PTS-shifted) → EDL `ass` titles → subtitles LAST. `--preview` is 1080p / medium / CRF 22 (QC-grade), `--draft` is 720p / ultrafast / CRF 28 (cut-point check only). `--build-subtitles` to generate master.srt inline. Loudness normalization to -14 LUFS / -1 dBTP delivered is ON by default (limiter at -2: the AAC encode adds 0.3–0.9 dB of true peak), `--no-loudnorm` turns it off. The source frame rate is preserved unless `--fps` overrides it. `"grade": "auto"` in the EDL grades every range from its own frames. Segments are cut to whole frames and cached by what shapes them: re-rendering after changing one range re-extracts one range. Audio comes from EDL `audio_track` (default 0), the same track the transcript was made from.
+- **`verify_render.py <out.mp4> <edl.json> [--retranscribe ru]`** — the self-eval in one pass: duration vs the quantized EDL, a seams sheet (frame before / after every cut), dark-border check after cuts, loudness and true peak, and with `--retranscribe` a local transcription of the render diffed against the words the EDL keeps, mismatches next to a cut flagged.
 - **`grade.py <in> -o <out>`** — ffmpeg filter chain grade. Presets + `--filter '<raw>'` for custom.
 
 For animations, create `<edit>/animations/slot_<id>/` with `Bash` and spawn a sub-agent via the `Agent` tool.
@@ -93,17 +96,20 @@ For animations, create `<edit>/animations/slot_<id>/` with `Bash` and spawn a su
 2. **Pre-scan for problems.** One pass over `takes_packed.md` to note verbal slips, obvious mis-speaks, or phrasings to avoid. Plain list, feed into the editor brief.
 3. **Converse.** Describe what you see in plain English. Ask questions *shaped by the material*. Collect: content type, target length/aspect, aesthetic/brand direction, pacing feel, must-preserve moments, must-cut moments, animation and grade preferences, subtitle needs. Do not use a fixed checklist — the right questions are different every time.
 4. **Propose strategy.** 4–8 sentences: shape, take choices, cut direction, animation plan, grade direction, subtitle style, length estimate. **Wait for confirmation.**
-5. **Execute.** Produce `edl.json` via the editor sub-agent brief. Drill into `timeline_view` at ambiguous moments. Build animations in parallel sub-agents. Apply grade per-segment. Compose via `render.py`.
+5. **Execute.** Produce `edl.json` via the editor sub-agent brief (multi-take), or `tighten.py` for one take that needs its pauses and slips out. For reframing: `timeline_view.py --edl` to see what each range holds, a `frame` target per range, then `reframe.py`. Drill into `timeline_view` at ambiguous moments. Build animations in parallel sub-agents. Apply grade per-segment. Compose via `render.py`.
 6. **Preview.** `render.py --preview`.
-7. **Self-eval (before showing the user).** Run `timeline_view` on the **rendered output** (not the sources) at every cut boundary (±1.5s window). Check each image for:
-   - Visual discontinuity / flash / jump at the cut
-   - Waveform spike at the boundary (audio pop that slipped past the 30ms fade)
+7. **Self-eval (before showing the user).** Run `verify_render.py <preview> <edl.json>` (add `--retranscribe <lang>` when cuts are tight or the ASR was local) and look at the seams sheet it writes. Check for:
+   - Visual discontinuity / flash / scale jump at a cut
+   - Dark border after a cut (a zoom sampling outside the frame; dark content at the edge is a false alarm)
+   - A word mismatch flagged NEAR CUT: a clipped or leftover word
    - Subtitle hidden behind an overlay (Rule 1 violation)
    - Overlay misaligned or showing wrong frames (Rule 4 violation)
 
-   Also sample: first 2s, last 2s, and 2–3 mid-points — check grade consistency, subtitle readability, overall coherence. Run `ffprobe` on the output to verify duration matches the EDL expectation.
+   Open `timeline_view` on the rendered output (not the sources) only for cuts that look wrong on the sheet; one image per cut does not scale past a dozen cuts. An RMS jump at a cut is not a click: it is nearly always speech starting right after a tightened pause.
 
-   Measure the audio, don't assume it: `ffmpeg -i out.mp4 -af ebur128=peak=true -f null -` for integrated loudness and true peak, plus RMS per section (dialogue, music-only, end card). An end card 15 dB under the dialogue, or effects louder than speech, is a bug. You cannot listen: say so, and report the numbers.
+   Also sample: first 2s, last 2s, and 2–3 mid-points — check grade consistency, subtitle readability, overall coherence.
+
+   Measure the audio, don't assume it: `verify_render.py` reports integrated loudness and true peak; add RMS per section (dialogue, music-only, end card) when there is music. An end card 15 dB under the dialogue, or effects louder than speech, is a bug. You cannot listen: say so, and report the numbers.
 
    For anything the user will publish (launch, promo, ad), also spawn one **critic sub-agent** with the rendered file, the EDL, and any reference videos the user gave. Brief it to roast, not to praise: a verdict, ranked problems with timecodes and evidence (frames, levels), and the 5 fixes to do first. Fresh eyes catch what the author stopped seeing — cut-off payoff lines, 0.5s memes, unreadable 28px text at phone size.
 
@@ -119,6 +125,19 @@ For animations, create `<edit>/animations/slot_<id>/` with `Bash` and spawn a su
 - **Silence gaps are cut candidates.** Silences ≥400ms are usually the cleanest. 150–400ms phrase boundaries are usable with a visual check. <150ms is unsafe (mid-phrase).
 - **Example cut padding** (the launch video shipped with this): 50ms before the first kept word, 80ms after the last. Tighter for montage energy, looser for documentary. Stay in the 30–200ms working window (Hard Rule 7).
 - **Never reason audio and video independently.** Every cut must work on both tracks.
+- **A loud pause is not a pause.** Local Whisper drops fillers and mumbled words, and they land inside the "silence" between two transcribed words, not in the text. A gap with speech-level audio holds words: `tighten.py` lists them; re-transcribe the snippet with a second or so of context before deciding the cut.
+
+### Reframing (punch-ins and slow zoom on one static camera)
+
+Worked from a 6-minute vertical haul video, one iPhone on a stand, 62 ranges after tightening; the viewer's feedback shaped the rules.
+
+- **No scale jumps at a cut.** The first version switched shot size instantly at every cut (1.00 / 1.12 / 1.25); the viewer called it harsh. What shipped keeps scale and anchor continuous: each range starts at the zoom its predecessor ended on and eases (in-out cubic) to its own size over ~1 s, capped at 70% of the range. `reframe.py` does this.
+- **Time the motion to the last frame** (`duration − 1/fps`), not to `duration`: the last frame sits one frame early, and a push-in misses its end value by ~2% and jumps at the cut.
+- **Topic changes get a push.** The outgoing range pushes in ~10% over its last 0.4 s, the next range carries on from there and eases to its size. Inside a topic, only the eased change of shot size.
+- **Alternate sizes, keep a slow drift.** Neighbouring ranges never share a size; within a range, an unzoomed shot pushes in and a zoomed one pulls out, 0.8% per second up to 4%.
+- **Look before choosing sizes.** No close-up on a range where the subject holds something at chest height, it gets cropped; `timeline_view.py --edl` shows which ranges those are. No shot change on a range under ~0.8 s; `tighten.py` merges those into their neighbour.
+- **1.25× is the ceiling for a close-up from a 1080p source**; beyond it the upscale gets soft. Wider sources allow more.
+- **`perspective` with `eval=frame` and cubic interpolation, not `zoompan`.** zoompan rounds the crop to whole pixels and shimmers on slow moves; perspective is subpixel and runs at ~2.4× real time on 1080×1920.
 
 ## The packed transcript (primary reading view)
 
@@ -204,6 +223,19 @@ Alignment=2,MarginV=90
 **`natural-sentence`** (if you invent this mode) — narrative, documentary, education. 4–7 word chunks, sentence case, break on natural pauses, `MarginV=60–80`, larger font for readability, slightly wider max-width. No shipped force_style — design one if you need it.
 
 Invent a third style if neither fits. Hard rules: subtitles LAST (Rule 1), output-timeline offsets (Rule 5).
+
+## Titles (names and numbers on screen, when requested)
+
+Designed text that appears when a name, place, price or number is spoken. Write it as an ASS file timed with `render.source_to_output`, and point the EDL's `ass` field at it: `render.py` burns it after overlays and before subtitles, without the subtitle force_style, so its fonts, positions and tags survive.
+
+- **Confirm every name before it goes on screen.** The ASR spells names by ear. In the first project 5 of 12 titles came out wrong (Ultraviolence heard as «Ультра Вайлет», Lust for Life as «Last for Life», Honeymoon as «Ханни Мун», plus a café and a brand only the speaker could spell). Correct what you can verify, list the rest for the user with your best reading.
+- **Pick the font from a board, not from a list.** Render 2–3 candidate styles on 2–3 real frames at different shot sizes (`ffmpeg -ss T -i preview.mp4 -frames:v 1 -vf ass=candidate.ass`), stack them, show the user. Choosing from names alone is guessing.
+- **Ink follows the background of the title zone.** White with a shadow disappeared on light wallpaper; near-black ink read cleanly. Sample the zone before choosing.
+- **Place against the tightest shot.** With reframing the head moves: measure clearance on the closest frame (1.25× raised the hair line ~90 px). Vertical platforms cover roughly the top 220 px and the bottom 25–30% with UI; keep the main line out of the top band if the video goes to Reels or TikTok.
+- **Small labels need weight.** A 30 px label at 1080 wide with 31% transparency vanished at phone size; 34 px bold at ~20% transparency read. ASS alpha runs `&H00` opaque to `&HFF` transparent.
+- **Fast lists: keep the label, swap the value.** Three album names a second apart do not fit as a stack above a head; a fixed artist line with the album name swapping underneath does.
+
+Worked style from that project: main line PT Serif Italic 88 px, label PT Sans Bold 34 px with 7 px spacing, ink `&H00181B1E`, bottom-centre anchors at y 290 / 194 on 1080×1920, `\fad(250,300)` with a 97→100% scale-in eased by `\t(0,450,0.5,...)`.
 
 ## Animations (when requested)
 
@@ -311,7 +343,7 @@ Match the source unless the user asked for something specific. Common targets: `
 }
 ```
 
-`grade` is a preset name or raw ffmpeg filter. A range may carry `vf`, a raw ffmpeg video filter for that range only (punch-in, reframe, animated zoom via `perspective` with `eval=frame`), applied after scale and grade. `overlays` are rendered animation clips. `subtitles` is optional and applied LAST.
+`grade` is a preset name or raw ffmpeg filter. A range may carry `vf`, a raw ffmpeg video filter for that range only (punch-in, reframe, animated zoom via `perspective` with `eval=frame`), applied after scale and grade; `reframe.py` writes it from the range's `frame` target (`{"z", "ax", "ay"}`, optional `drift`) and `topic` flag. `audio_track` (default 0) picks the source audio stream. `ass` is a designed titles file burned after overlays, before subtitles. `overlays` are rendered animation clips. `subtitles` is optional and applied LAST.
 
 ## Memory — `project.md`
 
