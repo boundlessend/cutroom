@@ -3,7 +3,7 @@
 Implements the HEURISTICS render pipeline in the correct order:
 
   1. Per-segment extract with color grade + 30ms audio fades baked in, each
-     range cut to whole frames
+     range cut to whole frames and cached by what shapes it
   2. Lossless -c copy concat into base.mp4
   3. If overlays or subtitles: single filter graph that overlays animations
      (with PTS shift so frame 0 lands at the overlay window start)
@@ -23,6 +23,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -372,6 +373,26 @@ def extract_segment(
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
 
+# Bump when the extract command changes: it invalidates every cached segment.
+EXTRACT_VERSION = 2
+
+
+def segment_cache_key(
+    source: Path, start: float, frames: int, rate: str, seg_filter: str, quality: str, audio_track: int
+) -> str:
+    """Everything that shapes a segment's pixels and samples, hashed.
+
+    The source's size and mtime stand in for its content, so re-exporting a take
+    under the same name still invalidates its segments.
+    """
+    st = source.stat()
+    payload = json.dumps([
+        EXTRACT_VERSION, str(source), st.st_size, st.st_mtime_ns,
+        round(start, 3), frames, rate, seg_filter, quality, audio_track,
+    ])
+    return hashlib.sha1(payload.encode()).hexdigest()[:12]
+
+
 def extract_all_segments(
     edl: dict,
     edit_dir: Path,
@@ -379,8 +400,12 @@ def extract_all_segments(
     draft: bool = False,
     fps: str | None = None,
 ) -> list[Path]:
-    """Extract every EDL range into edit_dir/clips_graded/seg_NN.mp4.
+    """Extract every EDL range into edit_dir/clips_<quality>/seg_NN_<src>_<key>.mp4.
     Returns the ordered list of segment paths.
+
+    A segment whose cache key already has a file is reused, so re-rendering after
+    changing one range re-extracts one range. Files of older renders in the same
+    clips dir are removed at the end.
 
     If the EDL `grade` is "auto", analyze each segment range with
     `auto_grade_for_clip` and apply a per-segment subtle correction.
@@ -388,6 +413,7 @@ def extract_all_segments(
     """
     resolved = resolve_grade_filter(edl.get("grade"))
     is_auto = resolved == "__AUTO__"
+    quality = "draft" if draft else ("preview" if preview else "final")
     clips_dir = edit_dir / (
         "clips_draft" if draft else ("clips_preview" if preview else "clips_graded")
     )
@@ -403,6 +429,7 @@ def extract_all_segments(
           f"{' (forced)' if fps is not None else ' (from source)'}")
     if is_auto:
         print("  (auto-grade per segment: analyzing each range)")
+    reused = 0
     for i, r in enumerate(ranges):
         src_name = r["source"]
         src_path = resolve_path(sources[src_name], edit_dir)
@@ -419,15 +446,26 @@ def extract_all_segments(
         if r.get("vf"):
             seg_filter = ",".join(f for f in (seg_filter, r["vf"]) if f)
 
-        out_path = clips_dir / f"seg_{i:02d}_{src_name}.mp4"
+        key = segment_cache_key(src_path, start, frames, out_rate, seg_filter, quality, audio_track)
+        out_path = clips_dir / f"seg_{i:02d}_{src_name}_{key}.mp4"
         note = r.get("beat") or r.get("note") or ""
-        print(f"  [{i:02d}] {src_name}  {start:7.2f}-{end:7.2f}  ({duration:5.2f}s)  {note}")
+        cached = out_path.exists()
+        print(f"  [{i:02d}] {src_name}  {start:7.2f}-{end:7.2f}  ({duration:5.2f}s)  "
+              f"{'cached  ' if cached else ''}{note}")
         if is_auto:
             print(f"        grade: {seg_filter or '(none)'}")
-        extract_segment(src_path, start, frames, seg_filter, out_path,
-                        preview=preview, draft=draft, rate=out_rate, audio_track=audio_track)
+        if cached:
+            reused += 1
+        else:
+            extract_segment(src_path, start, frames, seg_filter, out_path,
+                            preview=preview, draft=draft, rate=out_rate, audio_track=audio_track)
         seg_paths.append(out_path)
 
+    keep = set(seg_paths)
+    stale = [p for p in clips_dir.glob("seg_*.mp4") if p not in keep]
+    for p in stale:
+        p.unlink()
+    print(f"  {reused} reused, {len(ranges) - reused} extracted, {len(stale)} stale removed")
     return seg_paths
 
 

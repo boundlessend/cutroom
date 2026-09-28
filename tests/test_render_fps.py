@@ -91,30 +91,34 @@ class RenderRateTests(unittest.TestCase):
             ],
         }
 
-    def test_multi_source_render_resolves_one_rate_from_first_source(self):
-        edl = self._edl()
-        with tempfile.TemporaryDirectory() as temp_dir:
-            edit_dir = Path(temp_dir)
-            with (
-                patch.object(render, "probe_source_fps", return_value="60/1") as probe,
-                patch.object(render, "extract_segment") as extract,
-            ):
-                with contextlib.redirect_stdout(io.StringIO()):
-                    render.extract_all_segments(edl, edit_dir, preview=False)
+    def setUp(self):
+        # the segment cache key reads each source's size and mtime
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.edit_dir = Path(tmp.name)
+        for name in ("first.mp4", "second.mp4"):
+            (self.edit_dir / name).write_bytes(b"")
 
-        probe.assert_called_once_with((edit_dir / "first.mp4").resolve())
+    def test_multi_source_render_resolves_one_rate_from_first_source(self):
+        with (
+            patch.object(render, "probe_source_fps", return_value="60/1") as probe,
+            patch.object(render, "extract_segment") as extract,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            render.extract_all_segments(self._edl(), self.edit_dir, preview=False)
+
+        probe.assert_called_once_with((self.edit_dir / "first.mp4").resolve())
         self.assertEqual([call.kwargs["rate"] for call in extract.call_args_list], ["60/1", "60/1"])
 
     def test_explicit_rate_skips_probe_and_applies_to_every_segment(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            with (
-                patch.object(render, "probe_source_fps") as probe,
-                patch.object(render, "extract_segment") as extract,
-                contextlib.redirect_stdout(io.StringIO()),
-            ):
-                render.extract_all_segments(
-                    self._edl(), Path(temp_dir), preview=False, fps="30"
-                )
+        with (
+            patch.object(render, "probe_source_fps") as probe,
+            patch.object(render, "extract_segment") as extract,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            render.extract_all_segments(
+                self._edl(), self.edit_dir, preview=False, fps="30"
+            )
 
         probe.assert_not_called()
         self.assertEqual(
@@ -123,15 +127,14 @@ class RenderRateTests(unittest.TestCase):
         )
 
     def test_failed_probe_falls_back_to_24_for_every_segment(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            with (
-                patch.object(render, "probe_source_fps", return_value=None),
-                patch.object(render, "extract_segment") as extract,
-                contextlib.redirect_stdout(io.StringIO()),
-            ):
-                render.extract_all_segments(
-                    self._edl(), Path(temp_dir), preview=False
-                )
+        with (
+            patch.object(render, "probe_source_fps", return_value=None),
+            patch.object(render, "extract_segment") as extract,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            render.extract_all_segments(
+                self._edl(), self.edit_dir, preview=False
+            )
 
         self.assertEqual(
             [call.kwargs["rate"] for call in extract.call_args_list],
