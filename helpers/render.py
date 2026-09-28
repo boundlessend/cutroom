@@ -5,9 +5,9 @@ Implements the HEURISTICS render pipeline in the correct order:
   1. Per-segment extract with color grade + 30ms audio fades baked in, each
      range cut to whole frames and cached by what shapes it
   2. Lossless -c copy concat into base.mp4
-  3. If overlays or subtitles: single filter graph that overlays animations
-     (with PTS shift so frame 0 lands at the overlay window start)
-     and applies `subtitles` filter LAST → final.mp4
+  3. If overlays, ASS titles or subtitles: single filter graph that overlays
+     animations (with PTS shift so frame 0 lands at the overlay window start),
+     burns the EDL's `ass` file as designed, and applies `subtitles` LAST → final.mp4
 
 Optionally builds a master SRT from the per-source transcripts + EDL
 output-timeline offsets, applies the proven force_style (2-word
@@ -728,18 +728,22 @@ def apply_loudnorm_two_pass(
 def build_final_composite(
     base_path: Path,
     overlays: list[dict],
+    ass_path: Path | None,
     subtitles_path: Path | None,
     out_path: Path,
     edit_dir: Path,
 ) -> None:
-    """Final pass: base → overlays (PTS-shifted) → subtitles LAST → out.
+    """Final pass: base → overlays (PTS-shifted) → designed ASS titles → subtitles LAST → out.
 
-    If there are no overlays and no subtitles, just copy base to out.
+    The EDL's `ass` file is burned as written: unlike subtitles it gets no
+    force_style, so its own fonts, positions and animation tags survive.
+    If there is nothing to composite, just copy base to out.
     """
     has_overlays = bool(overlays)
+    has_ass = ass_path is not None
     has_subs = subtitles_path is not None and subtitles_path.exists()
 
-    if not has_overlays and not has_subs:
+    if not has_overlays and not has_ass and not has_subs:
         # Nothing to do — just rename/copy base to final name
         run(["ffmpeg", "-y", "-i", str(base_path), "-c", "copy", str(out_path)], quiet=True)
         return
@@ -767,6 +771,11 @@ def build_final_composite(
         )
         current = next_label
 
+    if has_ass:
+        ass_abs = str(ass_path.resolve()).replace(":", r"\:").replace("'", r"\'")
+        filter_parts.append(f"{current}ass='{ass_abs}'[vass]")
+        current = "[vass]"
+
     # Subtitles LAST — Rule 1
     if has_subs:
         subs_abs = str(subtitles_path.resolve()).replace(":", r"\:").replace("'", r"\'")
@@ -776,7 +785,7 @@ def build_final_composite(
         out_label = "[outv]"
     else:
         # Rename the last overlay output to [outv] for consistency
-        if has_overlays:
+        if has_overlays or has_ass:
             filter_parts.append(f"{current}null[outv]")
             out_label = "[outv]"
         else:
@@ -797,7 +806,8 @@ def build_final_composite(
         str(out_path),
     ]
     print(f"compositing → {out_path.name}")
-    print(f"  overlays: {len(overlays)}, subtitles: {'yes' if has_subs else 'no'}")
+    print(f"  overlays: {len(overlays)}, ass titles: {'yes' if has_ass else 'no'}, "
+          f"subtitles: {'yes' if has_subs else 'no'}")
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
 
@@ -877,15 +887,21 @@ def main() -> None:
         elif edl.get("subtitles"):
             subs_path = resolve_subtitles_path(edl["subtitles"], edit_dir)
 
-    # 4. Composite (overlays + subtitles LAST) → intermediate (pre-loudnorm) path
+    ass_path: Path | None = None
+    if edl.get("ass"):
+        ass_path = resolve_path(edl["ass"], edit_dir)
+        if not ass_path.exists():
+            sys.exit(f"ass file in EDL not found: {ass_path}")
+
+    # 4. Composite (overlays + ASS titles + subtitles LAST) → intermediate (pre-loudnorm) path
     overlays = edl.get("overlays") or []
     if args.no_loudnorm:
         # Composite directly to final output
-        build_final_composite(base_path, overlays, subs_path, out_path, edit_dir)
+        build_final_composite(base_path, overlays, ass_path, subs_path, out_path, edit_dir)
     else:
         # Composite to a temp file, then run loudnorm → final output
         tmp_composite = out_path.with_suffix(".prenorm.mp4")
-        build_final_composite(base_path, overlays, subs_path, tmp_composite, edit_dir)
+        build_final_composite(base_path, overlays, ass_path, subs_path, tmp_composite, edit_dir)
         print(f"loudness normalization → social-ready ({LOUDNORM_I:g} LUFS / {LOUDNORM_TP:g} dBTP "
               f"delivered, limiter at {LIMITER_TP:g} / LRA {LOUDNORM_LRA:g})")
         apply_loudnorm_two_pass(tmp_composite, out_path, preview=args.draft)
