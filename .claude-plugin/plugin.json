@@ -1,0 +1,11 @@
+{
+  "name": "cutroom",
+  "description": "Edit videos by conversation: tighten pauses and slips, continuous punch-in reframing, designed on-screen titles, loudness-normalized renders and a one-pass self-check. Free local transcription with mlx-whisper, ElevenLabs Scribe optional. Based on browser-use/video-use.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Arseni Okhrimenko",
+    "url": "https://github.com/boundlessend"
+  },
+  "homepage": "https://github.com/boundlessend/cutroom",
+  "license": "BSD-3-Clause AND MIT"
+}

@@ -1,0 +1,21 @@
+{
+  "name": "cutroom",
+  "description": "cutroom, a conversational video editing plugin for Claude Code",
+  "owner": {
+    "name": "Arseni Okhrimenko",
+    "url": "https://github.com/boundlessend"
+  },
+  "plugins": [
+    {
+      "name": "cutroom",
+      "source": "./",
+      "description": "Edit videos by conversation: tighten pauses and slips, continuous punch-in reframing, designed on-screen titles, loudness-normalized renders and a one-pass self-check. Free local transcription with mlx-whisper, ElevenLabs Scribe optional.",
+      "author": {
+        "name": "Arseni Okhrimenko"
+      },
+      "category": "productivity",
+      "homepage": "https://github.com/boundlessend/cutroom",
+      "license": "BSD-3-Clause AND MIT"
+    }
+  ]
+}

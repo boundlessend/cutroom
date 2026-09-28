@@ -37,7 +37,7 @@ package-lock.json
 yarn.lock
 .npm/
 
-# Manim render artifacts (when running skills/manim-video scripts locally)
+# Manim render artifacts (when an animation slot is rendered locally)
 media/
 *.log
 
