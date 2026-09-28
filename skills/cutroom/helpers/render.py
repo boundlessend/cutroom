@@ -669,6 +669,7 @@ def build_master_srt(edl: dict, edit_dir: Path, out_path: Path, rate: str) -> No
     """
     audio_track = int(edl.get("audio_track", 0))
     entries: list[tuple[float, float, str]] = []
+    missing: set[str] = set()
     seg_offset = 0.0
 
     for r in edl["ranges"]:
@@ -678,9 +679,13 @@ def build_master_srt(edl: dict, edit_dir: Path, out_path: Path, rate: str) -> No
         seg_end = seg_start + seg_duration
 
         # named by the source file and the track it was made from, as transcribe*.py write it
-        tr_path = transcript_path(edit_dir, resolve_path(edl["sources"][src_name], edit_dir), audio_track)
+        src_path = resolve_path(edl["sources"][src_name], edit_dir)
+        tr_path = transcript_path(edit_dir, src_path, audio_track)
         if not tr_path.exists():
-            print(f"  no transcript for {src_name}, skipping captions for this segment")
+            # a source without sound has nothing to caption; any other gap would ship
+            # a video with captions missing from some of it
+            if count_audio_tracks(src_path) > 0:
+                missing.add(str(tr_path))
             seg_offset += seg_duration
             continue
 
@@ -702,6 +707,13 @@ def build_master_srt(edl: dict, edit_dir: Path, out_path: Path, rate: str) -> No
             entries.append((out_start, out_end, text))
 
         seg_offset += seg_duration
+
+    if missing:
+        sys.exit(f"--build-subtitles: no transcript at {', '.join(sorted(missing))}. "
+                 "Transcribe those sources, or pass --no-subtitles.")
+    if not entries:
+        sys.exit("--build-subtitles: the kept ranges hold no transcribed words, nothing to caption. "
+                 "Pass --no-subtitles.")
 
     # Sort and write as SRT
     entries.sort(key=lambda e: e[0])
@@ -1038,6 +1050,9 @@ def main() -> None:
             subs_path = srt_path
         elif edl.get("subtitles"):
             subs_path = resolve_edl_file(edl["subtitles"], edit_dir, "subtitles")
+            # the subtitles filter fails on a file without cues, with no word of why
+            if "-->" not in subs_path.read_text(encoding="utf-8", errors="replace"):
+                sys.exit(f"subtitles file {subs_path} has no cues. Fix it or pass --no-subtitles.")
     ass_path = resolve_edl_file(edl["ass"], edit_dir, "ass") if edl.get("ass") else None
     overlays = [
         {**ov, "file": str(resolve_edl_file(ov["file"], edit_dir, "overlay"))}
