@@ -151,44 +151,62 @@ def is_hdr_source(video: Path) -> bool:
         return False
 
 
-def is_portrait_source(video: Path) -> bool:
-    """Return True if the displayed video is portrait, including rotation."""
-    try:
-        out = subprocess.run(
-            ["ffprobe", "-v", "error", "-select_streams", "v:0",
-             "-show_entries",
-             "stream=width,height:stream_side_data=rotation",
-             "-of", "json", str(video)],
-            capture_output=True, text=True, check=True,
-        )
-        streams = json.loads(out.stdout).get("streams") or []
-        if not streams:
-            return False
-        stream = streams[0]
-        w, h = int(stream["width"]), int(stream["height"])
+def display_size(video: Path) -> tuple[int, int]:
+    """(width, height) of the video as displayed, including rotation."""
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries",
+         "stream=width,height:stream_side_data=rotation",
+         "-of", "json", str(video)],
+        capture_output=True, text=True,
+    )
+    if out.returncode != 0:
+        raise RuntimeError(f"ffprobe failed on {video}: {out.stderr.strip()[-400:]}")
+    streams = json.loads(out.stdout).get("streams") or []
+    if not streams:
+        raise RuntimeError(f"no video stream in {video}")
+    stream = streams[0]
+    w, h = int(stream["width"]), int(stream["height"])
 
-        # ffmpeg autorotates display-matrix side data before applying filters.
-        # Swap coded dimensions for quarter-turns so the scale axis is selected
-        # from the dimensions the filter actually sees. A plain metadata tag is
-        # intentionally ignored because it does not guarantee autorotation.
-        rotation = 0
-        for side_data in stream.get("side_data_list") or []:
-            if side_data.get("rotation") is not None:
-                rotation = side_data["rotation"]
-                break
-        if int(round(float(rotation))) % 360 in (90, 270):
-            w, h = h, w
-        return h > w
-    except (
-        subprocess.CalledProcessError,
-        json.JSONDecodeError,
-        OSError,
-        OverflowError,
-        KeyError,
-        TypeError,
-        ValueError,
-    ):
-        return False
+    # ffmpeg autorotates display-matrix side data before applying filters.
+    # Swap coded dimensions for quarter-turns so the canvas is chosen from the
+    # dimensions the filter actually sees. A plain metadata tag is
+    # intentionally ignored because it does not guarantee autorotation.
+    rotation = 0
+    for side_data in stream.get("side_data_list") or []:
+        if side_data.get("rotation") is not None:
+            rotation = side_data["rotation"]
+            break
+    if int(round(float(rotation))) % 360 in (90, 270):
+        w, h = h, w
+    return w, h
+
+
+def parse_size(value: str) -> tuple[int, int]:
+    """--size WxH: even positive dimensions, as libx264 with yuv420p needs."""
+    m = re.fullmatch(r"([0-9]+)x([0-9]+)", value.strip())
+    if not m or int(m[1]) <= 0 or int(m[2]) <= 0 or int(m[1]) % 2 or int(m[2]) % 2:
+        raise argparse.ArgumentTypeError("size must be WIDTHxHEIGHT with even numbers, e.g. 1080x1920")
+    return int(m[1]), int(m[2])
+
+
+def even(x: float) -> int:
+    return max(2, 2 * round(x / 2))
+
+
+def canvas_size(first_source: tuple[int, int], size: tuple[int, int] | None, draft: bool) -> tuple[int, int]:
+    """The one frame size of the whole render. Every segment must share it, or the
+    `-c copy` concat switches resolution midstream.
+
+    Default: the first source's shape at 1080 on the short side; `size` overrides.
+    A draft is scaled down to 720 on the short side.
+    """
+    w, h = size or first_source
+    short = 720 if draft else 1080
+    if size is None or (draft and min(w, h) > short):
+        scale = short / min(w, h)
+        w, h = even(w * scale), even(h * scale)
+    return w, h
 
 
 def parse_fps(value: str) -> str:
@@ -315,11 +333,13 @@ def extract_segment(
     draft: bool,
     rate: str,
     audio_track: int,
+    canvas: tuple[int, int],
 ) -> None:
     """Extract a cut range as its own MOV with grade + 30ms audio fades baked in.
 
-    `-ss` before `-i` for fast accurate seeking. Scale to 1080p from 4K.
-    Portrait sources (height > width) are scaled by height to preserve orientation.
+    `-ss` before `-i` for fast accurate seeking. The picture is fitted into the
+    render's one `canvas`: a source of the same shape fills it, another shape (a
+    landscape insert in a vertical cut) gets bars rather than losing its edges.
     Video is capped at exactly `frames` frames and audio at the same duration, so
     the segment is as long as `segment_duration()` says and the timeline adds up.
     Streams are mapped explicitly: an iPhone file carries stereo AAC next to
@@ -330,24 +350,22 @@ def extract_segment(
     The mix is encoded to AAC once, at the end.
 
     Quality ladder:
-      - final (default): 1080p libx264 fast CRF 20
-      - preview:         1080p libx264 medium CRF 22 (evaluable for QC)
-      - draft:           720p libx264 ultrafast CRF 28 (cut-point check only)
+      - final (default): libx264 fast CRF 20
+      - preview:         libx264 medium CRF 22 (evaluable for QC)
+      - draft:           libx264 ultrafast CRF 28 on a 720p canvas (cut-point check only)
     """
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = out_path.with_name(f"{out_path.stem}.{os.getpid()}.part{out_path.suffix}")
     duration = float(frames / Fraction(rate))
 
-    portrait = is_portrait_source(source)
-    if draft:
-        scale = "scale=-2:1280" if portrait else "scale=1280:-2"
-    else:
-        scale = "scale=-2:1920" if portrait else "scale=1920:-2"
+    w, h = canvas
+    fit = (f"scale={w}:{h}:force_original_aspect_ratio=decrease:force_divisible_by=2,"
+           f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1")
 
     vf_parts: list[str] = []
     if is_hdr_source(source):
         vf_parts.append(TONEMAP_CHAIN)
-    vf_parts.append(scale)
+    vf_parts.append(fit)
     if grade_filter:
         vf_parts.append(grade_filter)
     vf = ",".join(vf_parts)
@@ -405,7 +423,8 @@ EXTRACT_VERSION = 3
 
 
 def segment_cache_key(
-    source: Path, start: float, frames: int, rate: str, seg_filter: str, quality: str, audio_track: int
+    source: Path, start: float, frames: int, rate: str, seg_filter: str, quality: str, audio_track: int,
+    canvas: tuple[int, int],
 ) -> str:
     """Everything that shapes a segment's pixels and samples, hashed.
 
@@ -415,7 +434,7 @@ def segment_cache_key(
     st = source.stat()
     payload = json.dumps([
         EXTRACT_VERSION, str(source), st.st_size, st.st_mtime_ns,
-        round(start, 3), frames, rate, seg_filter, quality, audio_track,
+        round(start, 3), frames, rate, seg_filter, quality, audio_track, list(canvas),
     ])
     return hashlib.sha1(payload.encode()).hexdigest()[:12]
 
@@ -426,6 +445,8 @@ def extract_all_segments(
     preview: bool,
     draft: bool = False,
     fps: str | None = None,
+    *,
+    canvas: tuple[int, int],
 ) -> list[Path]:
     """Extract every EDL range into edit_dir/clips_<quality>/seg_<src>_<start>_<key>.mov.
     Returns the ordered list of segment paths.
@@ -455,7 +476,7 @@ def extract_all_segments(
 
     seg_paths: list[Path] = []
     print(f"extracting {len(ranges)} segment(s) → {clips_dir.name}/  @ {out_rate} fps"
-          f"{' (forced)' if fps is not None else ' (from source)'}")
+          f"{' (forced)' if fps is not None else ' (from source)'}, {canvas[0]}x{canvas[1]}")
     if is_auto:
         print("  (auto-grade per segment: analyzing each range)")
     reused = 0
@@ -471,11 +492,11 @@ def extract_all_segments(
             seg_filter, _stats = auto_grade_for_clip(src_path, start=start, duration=duration, verbose=False)
         else:
             seg_filter = resolved
-        # Per-range reframe/zoom rides after scale and grade, inside the same extract (Rule 2)
+        # Per-range reframe/zoom rides after the canvas fit and grade, inside the same extract (Rule 2)
         if r.get("vf"):
             seg_filter = ",".join(f for f in (seg_filter, r["vf"]) if f)
 
-        key = segment_cache_key(src_path, start, frames, out_rate, seg_filter, quality, audio_track)
+        key = segment_cache_key(src_path, start, frames, out_rate, seg_filter, quality, audio_track, canvas)
         out_path = clips_dir / f"seg_{src_name}_{start:09.3f}_{key}.mov"
         note = r.get("beat") or r.get("note") or ""
         cached = out_path.exists()
@@ -487,7 +508,8 @@ def extract_all_segments(
             reused += 1
         else:
             extract_segment(src_path, start, frames, seg_filter, out_path,
-                            preview=preview, draft=draft, rate=out_rate, audio_track=audio_track)
+                            preview=preview, draft=draft, rate=out_rate, audio_track=audio_track,
+                            canvas=canvas)
         seg_paths.append(out_path)
 
     print(f"  {reused} reused, {len(ranges) - reused} extracted")
@@ -909,6 +931,14 @@ def main() -> None:
         help="Skip audio loudness normalization. Default is on (-14 LUFS, -1 dBTP, LRA 11).",
     )
     ap.add_argument(
+        "--size",
+        type=parse_size,
+        default=None,
+        help="Output frame WIDTHxHEIGHT, e.g. 3840x2160 or 1080x1080. Default: the first "
+             "source's shape at 1080 on the short side (720 with --draft). Sources of "
+             "another shape are fitted inside with bars.",
+    )
+    ap.add_argument(
         "--fps",
         type=parse_fps,
         default=None,
@@ -927,6 +957,8 @@ def main() -> None:
     out_path = args.output.resolve()
 
     rate = resolve_output_rate(edl, edit_dir, args.fps)
+    first_source = resolve_path(edl["sources"][edl["ranges"][0]["source"]], edit_dir)
+    canvas = canvas_size(display_size(first_source), args.size, args.draft)
 
     # Every file the EDL names is checked before minutes of extraction, not after.
     subs_path: Path | None = None
@@ -945,7 +977,7 @@ def main() -> None:
 
     # 1. Extract per-segment (auto-grade per range if EDL grade is "auto")
     segment_paths = extract_all_segments(
-        edl, edit_dir, preview=args.preview, draft=args.draft, fps=args.fps
+        edl, edit_dir, preview=args.preview, draft=args.draft, fps=args.fps, canvas=canvas
     )
 
     # 2. Concat → base. Intermediates are named after the output, so renders of

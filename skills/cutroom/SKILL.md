@@ -322,7 +322,7 @@ Sound is where generated videos sound cheap. Worked rules from launch edits:
 
 ## Output spec
 
-Match the source unless the user asked for something specific. Common targets: `1920×1080@24` cinematic, `1920×1080@30` screen content, `1080×1920@30` vertical social, `3840×2160@24` 4K cinema, `1080×1080@30` square. `render.py` defaults the scale to 1080p from any source and has no `--filter` flag; for other targets edit the extract command, or grade separately with `grade.py --filter`. Worth asking the user which delivery format matters.
+Match the source unless the user asked for something specific. Common targets: `1920×1080@24` cinematic, `1920×1080@30` screen content, `1080×1920@30` vertical social, `3840×2160@24` 4K cinema, `1080×1080@30` square. `render.py` renders every range onto one canvas: by default the first source's shape at 1080 on the short side (720 with `--draft`), `--size 3840x2160` or `--size 1080x1080` for another target, `--fps` for another rate. A source of another shape is fitted inside with bars; give its ranges a `frame` zoom if bars are not wanted. Worth asking the user which delivery format matters.
 
 ## EDL format
 

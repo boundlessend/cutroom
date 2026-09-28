@@ -102,7 +102,7 @@ class RenderRateTests(unittest.TestCase):
             patch.object(render, "extract_segment") as extract,
             contextlib.redirect_stdout(io.StringIO()),
         ):
-            render.extract_all_segments(self._edl(), self.edit_dir, preview=False)
+            render.extract_all_segments(self._edl(), self.edit_dir, preview=False, canvas=(1920, 1080))
 
         probe.assert_called_once_with((self.edit_dir / "first.mp4").resolve())
         self.assertEqual([call.kwargs["rate"] for call in extract.call_args_list], ["60/1", "60/1"])
@@ -114,7 +114,7 @@ class RenderRateTests(unittest.TestCase):
             contextlib.redirect_stdout(io.StringIO()),
         ):
             render.extract_all_segments(
-                self._edl(), self.edit_dir, preview=False, fps="30"
+                self._edl(), self.edit_dir, preview=False, fps="30", canvas=(1920, 1080)
             )
 
         probe.assert_not_called()
@@ -130,7 +130,7 @@ class RenderRateTests(unittest.TestCase):
             contextlib.redirect_stdout(io.StringIO()),
         ):
             render.extract_all_segments(
-                self._edl(), self.edit_dir, preview=False
+                self._edl(), self.edit_dir, preview=False, canvas=(1920, 1080)
             )
 
         self.assertEqual(
