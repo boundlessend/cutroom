@@ -50,6 +50,14 @@ Ask in plain words, with the path to your footage:
 
 All outputs go to an `edit/` folder next to the footage; the plugin directory is never written to.
 
+## Tests
+
+```
+uv run --project skills/cutroom python -m unittest discover -s skills/cutroom/tests
+```
+
+The smoke test renders a synthetic clip with real ffmpeg and checks lip sync, duration and true peak.
+
 ## License
 
 cutroom's own work is licensed under the BSD 3-Clause License. The portions derived from browser-use/video-use remain under the MIT License, © Browser Use. Both texts are in [LICENSE](LICENSE).
