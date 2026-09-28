@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -73,8 +74,14 @@ def to_scribe_words(result: dict) -> list[dict]:
     for seg in result["segments"]:
         for w in seg.get("words", []):
             text = w["word"].strip()
-            if text:
-                words.append({"text": text, "start": w["start"], "end": w["end"], "type": "word"})
+            if not text:
+                continue
+            # Whisper splits "э-э" into "Э" and "-э,": a token opening with a hyphen
+            # continues the word before it, or captions read "Э -Э"
+            if words and re.match(r"-\w", text):
+                words[-1] = {**words[-1], "text": words[-1]["text"] + text, "end": w["end"]}
+                continue
+            words.append({"text": text, "start": w["start"], "end": w["end"], "type": "word"})
     return words
 
 
