@@ -1,6 +1,8 @@
 """Self-eval of a rendered cut against its EDL, in one pass instead of one image per cut.
 
-  duration   rendered video stream vs the frame-quantized EDL total (render.py cuts whole frames)
+  duration   rendered video stream vs the frame-quantized EDL total (render.py cuts whole frames),
+             and the decoded audio vs the picture: sound longer than the picture has drifted
+             off lip sync somewhere
   seams      one sheet: the frame just before and just after every cut → <edit>/verify/seams.png
   edges      cuts whose first frame has a dark border strip: a zoom sampling outside the frame,
              or just dark content at the edge (a black object) — the seams sheet tells which
@@ -40,16 +42,26 @@ NEAR_CUT_S = 0.4
 DARK_EDGE_LUMA = 12
 
 
-def stream_durations(path: Path) -> dict[str, float]:
-    """Video and audio stream durations. The container's duration is the longer of the two,
-    and audio legitimately runs ~0.1–0.15 s past the last frame (loudnorm and AAC padding),
-    so the timeline check has to read the video stream."""
+def video_duration(path: Path) -> float:
+    """The video stream's duration: the container's is the longer of video and audio."""
     out = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,duration", "-of", "json", str(path)],
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
         capture_output=True, text=True, check=True,
     )
-    return {s["codec_type"]: float(s["duration"]) for s in json.loads(out.stdout)["streams"]
-            if s["codec_type"] in ("video", "audio")}
+    return float(out.stdout)
+
+
+def decoded_audio_duration(path: Path) -> float:
+    """The audio as a player hears it: decoded samples. The stream's duration field said
+    +0.145 s while the decoded audio ran 1.26 s past the picture (AAC segments stacked
+    up by the -c copy concat), so only the samples count."""
+    out = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:a:0", "-ac", "1", "-ar", "8000",
+         "-f", "s16le", "-"],
+        capture_output=True, check=True,
+    )
+    return len(out.stdout) / 2 / 8000
 
 
 def grab(video: Path, t: float, dest: Path, width: int) -> Image.Image:
@@ -151,11 +163,13 @@ def main() -> None:
     expected_total = offsets[-1] + segment_duration(float(last["start"]), float(last["end"]), rate)
     cuts = offsets[1:]
 
-    durations = stream_durations(video)
-    drift = durations["video"] - expected_total
-    print(f"duration  video {durations['video']:.3f}s, {expected_total:.3f}s expected ({drift:+.3f}s)"
+    video_s = video_duration(video)
+    drift = video_s - expected_total
+    audio_gap = decoded_audio_duration(video) - video_s
+    print(f"duration  video {video_s:.3f}s, {expected_total:.3f}s expected ({drift:+.3f}s)"
           f"{'' if abs(drift) <= 2 / fps else '  <-- CHECK: timeline drift'}; "
-          f"audio tail {durations['audio'] - durations['video']:+.3f}s")
+          f"audio {audio_gap:+.3f}s vs video"
+          f"{'' if abs(audio_gap) <= 2 / fps else '  <-- CHECK: the sound drifts off the picture'}")
 
     sheet = edit_dir / "verify" / "seams.png"
     dark = seams_and_edges(video, cuts, fps, sheet)
