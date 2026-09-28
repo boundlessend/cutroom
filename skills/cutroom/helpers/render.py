@@ -904,8 +904,11 @@ def build_final_composite(
     out_path: Path,
     edit_dir: Path,
     canvas: tuple[int, int],
+    quality: tuple[str, str],
 ) -> None:
     """Final pass: base → overlays (PTS-shifted) → designed ASS titles → subtitles LAST → out.
+
+    `quality` is the (x264 preset, CRF) of this re-encode, from the render mode.
 
     Overlays are full-frame animations: each is scaled to the canvas, so one rendered
     at 1080p still lines up on a 720p draft.
@@ -968,7 +971,7 @@ def build_final_composite(
         "-filter_complex", filter_complex,
         "-map", out_label,
         "-map", "0:a",
-        "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+        "-c:v", "libx264", "-preset", quality[0], "-crf", quality[1],
         "-pix_fmt", "yuv420p",
         "-c:a", "copy",
         str(out_path),
@@ -1072,7 +1075,14 @@ def main() -> None:
     # 3. Composite (overlays + ASS titles + subtitles LAST), audio still PCM
     if overlays or ass_path or subs_path:
         composite_path = out_path.with_suffix(".composite.mov")
-        build_final_composite(base_path, overlays, ass_path, subs_path, composite_path, edit_dir, canvas)
+        # it re-encodes the whole cut, so a draft gets a draft's encode
+        if args.draft:
+            quality = ("ultrafast", "28")
+        elif args.preview:
+            quality = ("fast", "22")
+        else:
+            quality = ("fast", "18")
+        build_final_composite(base_path, overlays, ass_path, subs_path, composite_path, edit_dir, canvas, quality)
     else:
         composite_path = base_path
 
