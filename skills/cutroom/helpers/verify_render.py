@@ -171,10 +171,13 @@ def main() -> None:
           f"audio {audio_gap:+.3f}s vs video"
           f"{'' if abs(audio_gap) <= 2 / fps else '  <-- CHECK: the sound drifts off the picture'}")
 
-    sheet = edit_dir / "verify" / "seams.png"
-    dark = seams_and_edges(video, cuts, fps, sheet)
-    print(f"seams     {len(cuts)} cuts → {sheet}")
-    print(f"edges     {'none dark' if not dark else f'dark border after cuts {dark} — check the seams sheet'}")
+    if cuts:
+        sheet = edit_dir / "verify" / "seams.png"
+        dark = seams_and_edges(video, cuts, fps, sheet)
+        print(f"seams     {len(cuts)} cuts → {sheet}")
+        print(f"edges     {'none dark' if not dark else f'dark border after cuts {dark} — check the seams sheet'}")
+    else:
+        print("seams     one range, no cuts to check")
 
     i_lufs, tp = loudness(video)
     print(f"loudness  {i_lufs:.1f} LUFS, true peak {tp:.1f} dBFS"
