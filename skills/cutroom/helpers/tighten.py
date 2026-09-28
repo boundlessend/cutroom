@@ -121,16 +121,22 @@ def subtract(ranges: list[Range], removals: list[tuple[float, float]], words: li
     return out
 
 
+def removal_between(a: Range, b: Range, t: Tightening) -> bool:
+    return any(a.end <= x and y <= b.start for x, y in t.removals)
+
+
 def merge_short(ranges: list[Range], words: list[Word], t: Tightening) -> list[Range]:
-    """A range under min_range grows onto its predecessor, pause included, unless a removal sits between."""
+    """A range under min_range grows onto its predecessor, pause included, unless a removal
+    sits between. The first range has no predecessor and grows onto its successor."""
     out: list[Range] = []
     for r in ranges:
         prev = out[-1] if out else None
-        removed_between = prev is not None and any(prev.end <= a and b <= r.start for a, b in t.removals)
-        if prev is not None and r.end - r.start < t.min_range and not removed_between:
+        if prev is not None and r.end - r.start < t.min_range and not removal_between(prev, r, t):
             out[-1] = Range(prev.start, r.end, text_of(words, prev.start, r.end))
         else:
             out.append(r)
+    if len(out) > 1 and out[0].end - out[0].start < t.min_range and not removal_between(out[0], out[1], t):
+        out[:2] = [Range(out[0].start, out[1].end, text_of(words, out[0].start, out[1].end))]
     return out
 
 
