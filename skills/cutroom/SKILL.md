@@ -85,7 +85,7 @@ print `--help` under it anyway, which makes a broken environment look healthy.
 - **`pack_transcripts.py --edit-dir <dir>`** — `transcripts/*.json` → `takes_packed.md` (phrase-level, break on silence ≥ 0.5s).
 - **`tighten.py <video> -o <edit>/edl.json`** — EDL skeleton for one source: every pause ≥ `--gap` (0.45) cut, ranges padded `--pad-before`/`--pad-after` (0.10/0.14), `--remove START-END` for retakes and slips, `--topic T` for subject changes (split there, range marked `"topic": true`). Ranges under 0.8 s merge into their predecessor; ranges over 9 s split at sentence ends without removing time. Audits every cut pause for speech-level audio and lists the loud ones: those are words the ASR dropped.
 - **`timeline_view.py <video> <start> <end>`** — filmstrip + waveform PNG. On-demand visual drill-down. **Not a scan tool** — use it at decision points, not constantly. `--edl <edl.json>` draws every range as first/middle/last source frame on one sheet (`verify/edl_ranges.png`): the view for deciding shot sizes before rendering.
-- **Reframing** — give every range a `frame` target (`{"z", "ax", "ay"}`) and `render.py` zooms from it while extracting (logic in `reframe.py`, not a CLI): continuous zoom across cuts, eased settle, slow drift, push-in before a `topic` range, timed to the render's own rate. See Cut craft → Reframing.
+- **Reframing**: give every range a `frame` target (`{"z", "ax", "ay"}`) and `render.py` zooms from it while extracting (logic in `reframe.py`, not a CLI): continuous zoom across cuts, eased settle, slow drift, push-in before a `topic` range, timed to the render's own rate. See Cut craft → Reframing.
 - **`render.py <edl.json> -o <out>`** — per-segment extract → concat → overlays (PTS-shifted) → EDL `ass` titles → subtitles LAST. `--preview` is 1080p / medium / CRF 22 (QC-grade), `--draft` is 720p / ultrafast / CRF 28 (cut-point check only). `--build-subtitles` builds `<output>.srt` inline, next to the output. Intermediates are named after the output too, so several EDLs from one edit dir can render at the same time. Loudness normalization to -14 LUFS / -1 dBTP delivered is ON by default (limiter at -2: the AAC encode adds 0.3–0.9 dB of true peak), `--no-loudnorm` turns it off. The source frame rate is preserved unless `--fps` overrides it. `"grade": "auto"` in the EDL grades every range from its own frames. Segments are cut to whole frames and cached by what shapes them, in a clips dir shared by every EDL in the edit dir: re-rendering after changing one range re-extracts one range, and a sub-EDL (parts of a long cut, a teaser) renders from the full cut's segments. The cache is never pruned automatically; `clips_*` can be deleted any time. Audio comes from EDL `audio_track` (default 0), the same track the transcript was made from.
 - **`verify_render.py <out.mp4> <edl.json> [--retranscribe ru]`** — the self-eval in one pass: duration vs the quantized EDL, a seams sheet (frame before / after every cut), dark-border check after cuts, loudness and true peak, and with `--retranscribe` a local transcription of the render diffed against the words the EDL keeps, mismatches next to a cut flagged.
 - **`parts.py <edl.json> --max 60`**: splits a long cut into part EDLs of at most `--max` seconds (`edl_part1.json`, … next to the EDL), each starting at a cut or a pause between words, never while a title or overlay is on screen; the EDL's `ass`, `subtitles` and overlays are retimed per part. Render each with `render.py`, in parallel if you like: they share the full cut's segments.
@@ -111,10 +111,10 @@ For animations, create `<edit>/animations/slot_<id>/` with `Bash` and spawn a su
 ## The process
 
 1. **Inventory.** `ffprobe` every source. `transcribe_batch.py` on the directory. `pack_transcripts.py` to produce `takes_packed.md`. Sample one or two `timeline_view`s for a visual first impression.
-2. **Pre-scan for problems.** One pass over `takes_packed.md` to note verbal slips, obvious mis-speaks, or phrasings to avoid. Plain list, feed into the editor brief.
+2. **Pre-scan for problems.** One pass over `takes_packed.md` to note verbal slips, obvious mis-speaks, or phrasings to avoid. Plain list, feed into the editor brief (`references/multi-take.md`).
 3. **Converse.** Describe what you see in plain English. Ask questions *shaped by the material*. Collect: content type, target length/aspect, aesthetic/brand direction, pacing feel, must-preserve moments, must-cut moments, animation and grade preferences, subtitle needs. Do not use a fixed checklist — the right questions are different every time.
 4. **Propose strategy.** 4–8 sentences: shape, take choices, cut direction, animation plan, grade direction, subtitle style, length estimate. **Wait for confirmation.**
-5. **Execute.** Produce `edl.json` via the editor sub-agent brief (multi-take), or `tighten.py` for one take that needs its pauses and slips out. For reframing: `timeline_view.py --edl` to see what each range holds, a `frame` target per range; `render.py` does the zoom. Drill into `timeline_view` at ambiguous moments. Build animations in parallel sub-agents. Apply grade per-segment. Compose via `render.py`.
+5. **Execute.** Produce `edl.json` via the editor sub-agent brief (multi-take, `references/multi-take.md`), or `tighten.py` for one take that needs its pauses and slips out. For reframing: `timeline_view.py --edl` to see what each range holds, a `frame` target per range; `render.py` does the zoom. Drill into `timeline_view` at ambiguous moments. Build animations in parallel sub-agents. Apply grade per-segment. Compose via `render.py`.
 6. **Preview.** `render.py --preview`.
 7. **Self-eval (before showing the user).** Run `verify_render.py <preview> <edl.json>` (add `--retranscribe <lang>` when cuts are tight or the ASR was local) and look at the seams sheet it writes. Check for:
    - Visual discontinuity / flash / scale jump at a cut
@@ -168,173 +168,16 @@ Example line:
   [006.08-006.74] S0 We fixed this.
 ```
 
-## Editor sub-agent brief (for multi-take selection)
+## References
 
-When the task is "pick the best take of each beat across many clips," spawn a dedicated sub-agent with a brief shaped like this. The structure is load-bearing; the pitch-shape example is not.
+Read the one the task needs before doing that part of it:
 
-```
-You are editing a <type> video. Pick the best take of each beat and 
-assemble them chronologically by beat, not by source clip order.
-
-INPUTS:
-  - takes_packed.md (time-annotated phrase-level transcripts of all takes)
-  - Product/narrative context: <2 sentences from the user>
-  - Speaker(s): <name, role, delivery style note>
-  - Expected structure: <pick an archetype or invent one>
-  - Verbal slips to avoid: <list from the pre-scan pass>
-  - Target runtime: <seconds>
-
-Common structural archetypes (pick, adapt, or invent):
-  - Tech launch / demo:   HOOK → PROBLEM → SOLUTION → BENEFIT → EXAMPLE → CTA
-  - Tutorial:             INTRO → SETUP → STEPS → GOTCHAS → RECAP
-  - Interview:            (QUESTION → ANSWER → FOLLOWUP) repeat
-  - Travel / event:       ARRIVAL → HIGHLIGHTS → QUIET MOMENTS → DEPARTURE
-  - Documentary:          THESIS → EVIDENCE → COUNTERPOINT → CONCLUSION
-  - Music / performance:  INTRO → VERSE → CHORUS → BRIDGE → OUTRO
-  - Or invent your own.
-
-RULES:
-  - Start/end times must fall on word boundaries from the transcript.
-  - Pad cut boundaries (working window 30–200ms).
-  - Prefer silences ≥ 400ms as cut targets.
-  - Unavoidable slips are kept if no better take exists. Note them in "reason".
-  - If over budget, revise: drop a beat or trim tails. Report total and self-correct.
-
-OUTPUT (JSON array, no prose):
-  [{"source": "C0103", "start": 2.42, "end": 6.85, "beat": "HOOK",
-    "quote": "...", "reason": "..."}, ...]
-
-Return the final EDL and a one-line total runtime check.
-```
-
-## Color grade (when requested)
-
-Your job is to **reason about the image**, not apply a preset. Look at a frame (via `timeline_view`), decide what's wrong, adjust one thing, look again.
-
-Mental model is ASC CDL. Per channel: `out = (in * slope + offset) ** power`, then global saturation. `slope` → highlights, `offset` → shadows, `power` → midtones.
-
-**Example filter chains** (`grade.py` has `--list-presets`; use them as starting points or mix your own):
-
-- **`warm_cinematic`** — retro/technical, subtle teal/orange split, desaturated. Shipped in a real launch video. Safe for talking heads.
-- **`neutral_punch`** — minimal corrective: contrast bump + gentle S-curve. No hue shifts.
-- **`none`** — straight copy. Default when the user hasn't asked.
-
-For anything else — portraiture, nature, product, music video, documentary — invent your own chain. `grade.py --filter '<raw ffmpeg>'` accepts any filter string.
-
-Hard rules: apply **per-segment during extraction** (not post-concat, which re-encodes twice). Never go aggressive without testing skin tones.
-
-## Subtitles (when requested)
-
-Subtitles have three dimensions worth reasoning about: **chunking** (1/2/3/sentence per line), **case** (UPPER/Title/Natural), and **placement** (margin from bottom). The right combo depends on content.
-
-**Worked styles** — pick, adapt, or invent:
-
-**`bold-overlay`** — short-form tech launch, fast-paced social. ~2-word chunks, UPPERCASE, break on punctuation and pauses ≥ 0.3s, grow to 3 words rather than flash a cue < 0.35s (`chunk_words` in `render.py`), Helvetica 18 Bold, white-on-outline, `MarginV=90`. `render.py` ships with this as `SUB_FORCE_STYLE`.
-
-```
-FontName=Helvetica,FontSize=18,Bold=1,
-PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&H00000000,
-BorderStyle=1,Outline=2,Shadow=0,
-Alignment=2,MarginV=90
-```
-
-**`natural-sentence`** (if you invent this mode) — narrative, documentary, education. 4–7 word chunks, sentence case, break on natural pauses, `MarginV=60–80`, larger font for readability, slightly wider max-width. No shipped force_style — design one if you need it.
-
-Invent a third style if neither fits. Hard rules: subtitles LAST (Rule 1), output-timeline offsets (Rule 5).
-
-## Titles (names and numbers on screen, when requested)
-
-Designed text that appears when a name, place, price or number is spoken. Write it as an ASS file timed with `render.source_to_output`, and point the EDL's `ass` field at it: `render.py` burns it after overlays and before subtitles, without the subtitle force_style, so its fonts, positions and tags survive.
-
-- **Confirm every name before it goes on screen.** The ASR spells names by ear. In the first project 5 of 12 titles came out wrong (Ultraviolence heard as «Ультра Вайлет», Lust for Life as «Last for Life», Honeymoon as «Ханни Мун», plus a café and a brand only the speaker could spell). Correct what you can verify, list the rest for the user with your best reading.
-- **Pick the font from a board, not from a list.** Render 2–3 candidate styles on 2–3 real frames at different shot sizes (`ffmpeg -ss T -i preview.mp4 -frames:v 1 -vf ass=candidate.ass`), stack them, show the user. Choosing from names alone is guessing.
-- **Ink follows the background of the title zone.** White with a shadow disappeared on light wallpaper; near-black ink read cleanly. Sample the zone before choosing.
-- **Place against the tightest shot.** With reframing the head moves: measure clearance on the closest frame (1.25× raised the hair line ~90 px). Vertical platforms cover roughly the top 220 px and the bottom 25–30% with UI; keep the main line out of the top band if the video goes to Reels or TikTok.
-- **Small labels need weight.** A 30 px label at 1080 wide with 31% transparency vanished at phone size; 34 px bold at ~20% transparency read. ASS alpha runs `&H00` opaque to `&HFF` transparent.
-- **Fast lists: keep the label, swap the value.** Three album names a second apart do not fit as a stack above a head; a fixed artist line with the album name swapping underneath does.
-
-Worked style from that project: main line PT Serif Italic 88 px, label PT Sans Bold 34 px with 7 px spacing, ink `&H00181B1E`, bottom-centre anchors at y 290 / 194 on 1080×1920, `\fad(250,300)` with a 97→100% scale-in eased by `\t(0,450,0.5,...)`.
-
-## Animations (when requested)
-
-Animations match the content and the brand. **Get the palette, font, and visual language from the conversation** — never assume a default. If the user hasn't told you, propose a palette in the strategy phase and wait for confirmation before building anything.
-
-**Tool options:**
-
-Pick the engine per animation slot. Do not default to Remotion just because the animation is web-adjacent.
-
-- **HyperFrames** — Browser-native HTML/CSS/GSAP video compositions: product UI motion, website-to-video or mockup-to-video captures, kinetic typography, landing-page/storyboard promos, data-driven UI states, transparent WebM overlays, and clips that need deterministic frame capture plus HyperFrames lint/validate/render checks. Best when the animation should be authored and verified like a web composition instead of a React component tree.
-- **Remotion** — React/CSS compositions with component state, reusable React primitives, or an existing Remotion brand system. Best when the user specifically asks for React/Remotion or when React composition is the simpler authoring model.
-- **Manim** — formal diagrams, state machines, equation derivations, graph morphs. Install Manim Community Edition inside the slot directory on first use.
-- **PIL + PNG sequence + ffmpeg** — simple overlay cards: counters, typewriter text, single bar reveals, progressive draws. Fast to iterate, any aesthetic you want. The launch video used this.
-
-For HyperFrames slots, scaffold the slot inside `edit/animations/slot_<id>/` with `npx --yes hyperframes init . --example blank --non-interactive --skip-skills`, build the HTML composition there, run the HyperFrames checks that fit the slot (`lint`, `validate`, and a draft render when practical), then produce the final overlay video with `npx --yes hyperframes render . -o render.mp4` or `--format webm -o render.webm` when alpha is required. Point the EDL overlay `file` at the actual rendered path.
-
-For Remotion slots, keep the Remotion project isolated inside the same slot directory, scaffold with `npx create-video@latest` or install Remotion locally there, render the composition to `render.mp4` with the project-local `remotion render` command, and verify duration and dimensions with `ffprobe`.
-
-None is mandatory. Invent hybrids if useful (e.g., PIL background with a HyperFrames or Remotion layer on top).
-
-**Duration rules of thumb, context-dependent:**
-
-- **Sync-to-narration explanations.** A viewer needs to parse the content at 1×. Rough floor 3s, typical 5–7s for simple cards, 8–14s for complex diagrams. The launch video shipped at 5–7s per simple card.
-- **Beat-synced accents** (music video, fast montage). 0.5–2s is fine — they're visual accents, not information. The "readable at 1×" rule becomes *"recognizable at 1×"*, not *"fully parseable."*
-- **Hold the final frame ≥ 1s** before the cut (universal).
-- **Over voiceover:** total duration ≥ `narration_length + 1s` (universal).
-- **Never parallel-reveal independent elements** — the eye can't track two new things at once. One thing, pause, next thing.
-
-**Animation payoff timing (rule for sync-to-narration):** get the payoff word's timestamp. Start the overlay `reveal_duration` seconds earlier so the landing frame coincides with the spoken payoff word. Without this sync the animation feels disconnected.
-
-**Easing** (universal — never `linear`, it looks robotic):
-
-```python
-def ease_out_cubic(t):    return 1 - (1 - t) ** 3
-def ease_in_out_cubic(t):
-    if t < 0.5: return 4 * t ** 3
-    return 1 - (-2 * t + 2) ** 3 / 2
-```
-
-`ease_out_cubic` for single reveals (slow landing). `ease_in_out_cubic` for continuous draws.
-
-**Typing text anchor trick:** center on the FULL string's width, not the partial-string width — otherwise text slides left during reveal.
-
-**Example palette** (the launch video — one aesthetic among infinite):
-- Background `(10, 10, 10)` near-black
-- Accent `#FF5A00` / `(255, 90, 0)` orange
-- Labels `(110, 110, 110)` dim gray
-- Font: Menlo Bold at `/System/Library/Fonts/Menlo.ttc` (index 1)
-- ≤ 2 accent colors, ~40% empty space, minimal chrome
-- Result: terminal / retro tech feel
-
-This is one style. If the brand is warm and serif, use that. If it's colorful and playful, use that. If the user handed you a style guide, follow it. If they didn't, propose one and confirm.
-
-**Fonts fail silently.** A web font that didn't load renders in a fallback face with no error — the video ships in "almost Arial". In HyperFrames/Remotion, await the font load and then assert it: `if (!document.fonts.check('700 76px "Inter"')) throw new Error(...)`. In PIL, pass an explicit font path; never rely on the default.
-
-**Worked example — "show the edit" hook** (a launch video for this tool). Instead of a title card, the first 3s visualize the editing itself: each transcript word pops in on its Scribe timestamp, with bars under it drawn from the real audio envelope; a filler ("ummm") grows letter by letter while it is spoken, turns orange and is cut out on screen at the same frame the audio cuts, and the next line lands immediately. It works because the picture is *driven by the same data as the sound* — one composition (Remotion) reads frame-exact word/envelope JSON produced in Python, so nothing can drift. Use the idea whenever the story is "we removed something": make the removal visible.
-
-**Parallel sub-agent brief** — each animation is one sub-agent spawned via the `Agent` tool. Each prompt is self-contained (sub-agents have no parent context). Include:
-
-1. One-sentence goal: *"Build ONE animation: [spec]. Nothing else."*
-2. Absolute output path (`<edit>/animations/slot_<id>/render.mp4`)
-3. Exact technical spec: resolution, fps, codec, pix_fmt, CRF, duration
-4. Style palette as concrete values (RGB tuples, hex, or reference to a design system)
-5. Font path with index
-6. Frame-by-frame timeline (what happens when, with easing)
-7. Anti-list ("no chrome, no extras, no titles unless specified")
-8. Code pattern reference (copy helpers inline, don't import across slots)
-9. Deliverable checklist (script, render, verify duration via ffprobe, report)
-10. **"Do not ask questions. If anything is ambiguous, pick the most obvious interpretation and proceed."**
-
-One sub-agent = one file (unique filenames, parallel agents don't overwrite each other).
-
-## Music and sound effects (when requested)
-
-Sound is where generated videos sound cheap. Worked rules from launch edits:
-
-- **Fewer effects.** Every effect is tied to something visible (a cut, a landing, a click). ~20 stock whooshes/risers/impacts in 18s reads as generic; ~8 reads as designed.
-- **Hit on the frame.** Most effects have an attack (silence or a build before the transient). Measure it (first sample above ~-30 dBFS of the peak) and start the file `attack` seconds *before* the visible contact frame.
-- **Duck music under speech** (roughly -12 to -15 dB relative to its music-only level), and ramp it out before a stinger or end card instead of letting its own tail decay under your CTA.
-- **Master once:** mix to PCM, then two-pass loudnorm (-14 LUFS, true peak ≤ -1 dBTP) on the final mix. Then measure per section (see Self-eval).
-- **Music taste is the user's call.** Generated music defaults to "hype"; offer two contrasting beds and let the user listen. Don't claim a mix sounds good — you can only measure it.
+- `<skill dir>/references/multi-take.md`: the editor sub-agent brief, for picking the best take of each beat across many clips.
+- `<skill dir>/references/color-grade.md`: grading, when the user asks for a look or a correction.
+- `<skill dir>/references/subtitles.md`: caption styles, when subtitles are wanted.
+- `<skill dir>/references/titles.md`: names, places, prices and numbers on screen as designed ASS titles.
+- `<skill dir>/references/animations.md`: overlay animations (HyperFrames, Remotion, Manim, PIL), their timing, easing, palette and the sub-agent brief.
+- `<skill dir>/references/sound.md`: music and sound effects.
 
 ## Output spec
 
