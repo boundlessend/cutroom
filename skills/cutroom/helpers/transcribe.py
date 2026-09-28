@@ -31,6 +31,8 @@ import requests
 
 
 SCRIBE_URL = "https://api.elevenlabs.io/v1/speech-to-text"
+SCRIBE_ATTEMPTS = 3
+RETRY_STATUS = {408, 429, 500, 502, 503, 504}
 
 
 def load_api_key() -> str:
@@ -103,19 +105,32 @@ def call_scribe(
     if num_speakers:
         data["num_speakers"] = str(num_speakers)
 
-    with open(audio_path, "rb") as f:
-        resp = requests.post(
-            SCRIBE_URL,
-            headers={"xi-api-key": api_key},
-            files={"file": (audio_path.name, f, "audio/wav")},
-            data=data,
-            timeout=1800,
-        )
-
-    if resp.status_code != 200:
-        raise RuntimeError(f"Scribe returned {resp.status_code}: {resp.text[:500]}")
-
-    return resp.json()
+    # A dropped connection or a 5xx on a long upload is worth another try; a 4xx is not.
+    last_error: Exception = RuntimeError("Scribe was not called")
+    for attempt in range(1, SCRIBE_ATTEMPTS + 1):
+        try:
+            with open(audio_path, "rb") as f:
+                resp = requests.post(
+                    SCRIBE_URL,
+                    headers={"xi-api-key": api_key},
+                    files={"file": (audio_path.name, f, "audio/wav")},
+                    data=data,
+                    timeout=1800,
+                )
+        except (requests.ConnectionError, requests.Timeout) as exc:
+            last_error = RuntimeError(f"Scribe request for {audio_path.name} failed: {exc}")
+        else:
+            if resp.status_code == 200:
+                return resp.json()
+            last_error = RuntimeError(f"Scribe returned {resp.status_code} for {audio_path.name}: {resp.text[:500]}")
+            if resp.status_code not in RETRY_STATUS:
+                raise last_error
+        if attempt < SCRIBE_ATTEMPTS:
+            wait = 10 * attempt
+            print(f"  warning: {last_error}; retry {attempt}/{SCRIBE_ATTEMPTS - 1} in {wait}s",
+                  file=sys.stderr, flush=True)
+            time.sleep(wait)
+    raise last_error
 
 
 def transcript_path(edit_dir: Path, video: Path, audio_track: int = 0) -> Path:
