@@ -93,7 +93,7 @@ def call_scribe(
     num_speakers: int | None = None,
 ) -> dict:
     data: dict[str, str] = {
-        "model_id": "scribe_v1",
+        "model_id": "scribe_v2",
         "diarize": "true",
         "tag_audio_events": "true",
         "timestamps_granularity": "word",
