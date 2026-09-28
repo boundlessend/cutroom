@@ -311,7 +311,7 @@ Match the source unless the user asked for something specific. Common targets: `
 }
 ```
 
-`grade` is a preset name or raw ffmpeg filter. `overlays` are rendered animation clips. `subtitles` is optional and applied LAST.
+`grade` is a preset name or raw ffmpeg filter. A range may carry `vf`, a raw ffmpeg video filter for that range only (punch-in, reframe, animated zoom via `perspective` with `eval=frame`), applied after scale and grade. `overlays` are rendered animation clips. `subtitles` is optional and applied LAST.
 
 ## Memory — `project.md`
 

@@ -368,6 +368,9 @@ def extract_all_segments(
             seg_filter, _stats = auto_grade_for_clip(src_path, start=start, duration=duration, verbose=False)
         else:
             seg_filter = resolved
+        # Per-range reframe/zoom rides after scale and grade, inside the same extract (Rule 2)
+        if r.get("vf"):
+            seg_filter = ",".join(f for f in (seg_filter, r["vf"]) if f)
 
         note = r.get("beat") or r.get("note") or ""
         print(f"  [{i:02d}] {src_name}  {start:7.2f}-{end:7.2f}  ({duration:5.2f}s)  {note}")
