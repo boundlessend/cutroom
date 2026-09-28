@@ -91,6 +91,21 @@ print `--help` under it anyway, which makes a broken environment look healthy.
 - **`parts.py <edl.json> --max 60`**: splits a long cut into part EDLs of at most `--max` seconds (`edl_part1.json`, … next to the EDL), each starting at a cut or a pause between words, never while a title or overlay is on screen; the EDL's `ass`, `subtitles` and overlays are retimed per part. Render each with `render.py`, in parallel if you like: they share the full cut's segments.
 - **`grade.py <in> -o <out>`** — ffmpeg filter chain grade. Presets + `--filter '<raw>'` for custom.
 
+To time anything to the output (titles, overlays), write a script into the edit dir and import the helpers from the skill, under the same project:
+
+```python
+# <edit>/titles.py, run as: uv run --project <skill dir> python <edit>/titles.py
+import json, sys
+from pathlib import Path
+sys.path.insert(0, "<skill dir>/helpers")
+import render
+
+edit = Path("<edit>")
+edl = json.loads((edit / "edl.json").read_text())
+rate = render.resolve_output_rate(edl, edit, None)       # or the --fps you render with
+t = render.source_to_output(edl, rate, "C0103", 40.10)   # EDL source name, seconds in that source
+```
+
 For animations, create `<edit>/animations/slot_<id>/` with `Bash` and spawn a sub-agent via the `Agent` tool.
 
 ## The process
