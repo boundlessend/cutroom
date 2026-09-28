@@ -97,10 +97,11 @@ def resolve_path(maybe_path: str, base: Path) -> Path:
     return (base / p).resolve()
 
 
-def resolve_subtitles_path(maybe_path: str, edit_dir: Path) -> Path:
-    """Resolve the EDL's subtitles path: relative to the EDL's directory, else the
-    current directory (agents often write "edit/master.srt"). A missing file is an
-    error: rendering on without it silently ships a video with no captions."""
+def resolve_edl_file(maybe_path: str, edit_dir: Path, field: str) -> Path:
+    """Resolve a file the EDL names (subtitles, ass, an overlay): relative to the
+    EDL's directory, else the current directory (agents often write "edit/master.srt").
+    A missing file is an error: rendering on without it silently ships a video
+    without the captions, titles or animation."""
     candidates = [resolve_path(maybe_path, edit_dir)]
     if not Path(maybe_path).is_absolute():
         candidates.append(Path(maybe_path).resolve())
@@ -108,7 +109,7 @@ def resolve_subtitles_path(maybe_path: str, edit_dir: Path) -> Path:
         if c.exists():
             return c
     tried = ", ".join(str(c) for c in candidates)
-    sys.exit(f"subtitles file in EDL not found (tried {tried}). Fix the path or pass --no-subtitles.")
+    sys.exit(f"{field} file in EDL not found (tried {tried}). Fix the path in the EDL.")
 
 
 # -------- HDR → SDR tone mapping (HLG / PQ sources) --------------------------
@@ -911,6 +912,21 @@ def main() -> None:
 
     rate = resolve_output_rate(edl, edit_dir, args.fps)
 
+    # Every file the EDL names is checked before minutes of extraction, not after.
+    subs_path: Path | None = None
+    if not args.no_subtitles:
+        if args.build_subtitles:
+            srt_path = out_path.with_suffix(".srt")
+            build_master_srt(edl, edit_dir, srt_path, rate)
+            subs_path = srt_path
+        elif edl.get("subtitles"):
+            subs_path = resolve_edl_file(edl["subtitles"], edit_dir, "subtitles")
+    ass_path = resolve_edl_file(edl["ass"], edit_dir, "ass") if edl.get("ass") else None
+    overlays = [
+        {**ov, "file": str(resolve_edl_file(ov["file"], edit_dir, "overlay"))}
+        for ov in edl.get("overlays") or []
+    ]
+
     # 1. Extract per-segment (auto-grade per range if EDL grade is "auto")
     segment_paths = extract_all_segments(
         edl, edit_dir, preview=args.preview, draft=args.draft, fps=args.fps
@@ -921,30 +937,14 @@ def main() -> None:
     base_path = out_path.with_suffix(".base.mov")
     concat_segments(segment_paths, base_path)
 
-    # 3. Subtitles: build if requested, resolve final path
-    subs_path: Path | None = None
-    if not args.no_subtitles:
-        if args.build_subtitles:
-            subs_path = out_path.with_suffix(".srt")
-            build_master_srt(edl, edit_dir, subs_path, rate)
-        elif edl.get("subtitles"):
-            subs_path = resolve_subtitles_path(edl["subtitles"], edit_dir)
-
-    ass_path: Path | None = None
-    if edl.get("ass"):
-        ass_path = resolve_path(edl["ass"], edit_dir)
-        if not ass_path.exists():
-            sys.exit(f"ass file in EDL not found: {ass_path}")
-
-    # 4. Composite (overlays + ASS titles + subtitles LAST), audio still PCM
-    overlays = edl.get("overlays") or []
+    # 3. Composite (overlays + ASS titles + subtitles LAST), audio still PCM
     if overlays or ass_path or subs_path:
         composite_path = out_path.with_suffix(".composite.mov")
         build_final_composite(base_path, overlays, ass_path, subs_path, composite_path, edit_dir)
     else:
         composite_path = base_path
 
-    # 5. The one AAC encode of the audio
+    # 4. The one AAC encode of the audio
     if args.no_loudnorm:
         encode_audio(composite_path, out_path)
     else:

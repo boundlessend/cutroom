@@ -92,7 +92,7 @@ class SubtitlesPathTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             edit = Path(d)
             (edit / "master.srt").write_text("")
-            self.assertEqual(render.resolve_subtitles_path("master.srt", edit), (edit / "master.srt").resolve())
+            self.assertEqual(render.resolve_edl_file("master.srt", edit, "subtitles"), (edit / "master.srt").resolve())
 
     def test_falls_back_to_cwd(self):
         # EDL in edit/ that says "edit/master.srt" (path written from the project root)
@@ -103,7 +103,7 @@ class SubtitlesPathTests(unittest.TestCase):
             cwd = os.getcwd()
             try:
                 os.chdir(root)
-                got = render.resolve_subtitles_path("edit/master.srt", root / "edit")
+                got = render.resolve_edl_file("edit/master.srt", root / "edit", "subtitles")
             finally:
                 os.chdir(cwd)
             self.assertEqual(got.resolve(), (root / "edit" / "master.srt").resolve())
@@ -111,8 +111,8 @@ class SubtitlesPathTests(unittest.TestCase):
     def test_missing_is_an_error(self):
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaises(SystemExit) as e:
-                render.resolve_subtitles_path("nope.srt", Path(d))
-            self.assertIn("--no-subtitles", str(e.exception))
+                render.resolve_edl_file("nope.srt", Path(d), "subtitles")
+            self.assertIn("subtitles file in EDL not found", str(e.exception))
 
 
 if __name__ == "__main__":

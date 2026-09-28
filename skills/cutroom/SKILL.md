@@ -338,14 +338,14 @@ Match the source unless the user asked for something specific. Common targets: `
   ],
   "grade": "warm_cinematic",
   "overlays": [
-    {"file": "edit/animations/slot_1/render.mp4", "start_in_output": 0.0, "duration": 5.0}
+    {"file": "animations/slot_1/render.mp4", "start_in_output": 0.0, "duration": 5.0}
   ],
-  "subtitles": "edit/master.srt",
+  "subtitles": "master.srt",
   "total_duration_s": 87.4
 }
 ```
 
-`grade` is a preset name or raw ffmpeg filter. A range may carry `vf`, a raw ffmpeg video filter for that range only (punch-in, reframe, animated zoom via `perspective` with `eval=frame`), applied after scale and grade; `reframe.py` writes it from the range's `frame` target (`{"z", "ax", "ay"}`, optional `drift`) and `topic` flag. `audio_track` (default 0) picks the source audio stream. `ass` is a designed titles file burned after overlays, before subtitles. `overlays` are rendered animation clips. `subtitles` is optional and applied LAST.
+Relative paths (`overlays`, `ass`, `subtitles`) resolve against the EDL's own directory, then the current one. `grade` is a preset name or raw ffmpeg filter. A range may carry `vf`, a raw ffmpeg video filter for that range only (punch-in, reframe, animated zoom via `perspective` with `eval=frame`), applied after scale and grade; `reframe.py` writes it from the range's `frame` target (`{"z", "ax", "ay"}`, optional `drift`) and `topic` flag. `audio_track` (default 0) picks the source audio stream. `ass` is a designed titles file burned after overlays, before subtitles. `overlays` are rendered animation clips. `subtitles` is optional and applied LAST.
 
 ## Memory — `project.md`
 
