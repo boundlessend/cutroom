@@ -1,9 +1,11 @@
 ---
-name: video-use
-description: Edit any video by conversation. Transcribe, cut, color grade, generate overlay animations, burn subtitles - for talking heads, montages, tutorials, travel, interviews. No presets, no menus. Ask questions, confirm the plan, execute, iterate, persist. Production-correctness rules are hard; everything else is artistic freedom. Русские триггеры - «смонтируй видео», «нарежь видео», «собери ролик из дублей», «склей дубли», «вшей субтитры», «сделай цветокор», «наложи анимацию на видео». NOT for merely watching a video or pulling its transcript to answer questions about it - that is the watch skill; transcription here is a paid ElevenLabs call, or free and local via mlx-whisper.
+name: cutroom
+description: Edit any video by conversation. Transcribe, cut pauses and slips, reframe with smooth punch-ins, color grade, generate overlay animations, burn subtitles and designed titles - for talking heads, vlogs, montages, tutorials, travel, interviews. No presets, no menus. Ask questions, confirm the plan, execute, iterate, persist. Production-correctness rules are hard; everything else is artistic freedom. Russian triggers - «смонтируй видео», «нарежь видео», «вырежи паузы», «собери ролик из дублей», «склей дубли», «вшей субтитры», «сделай цветокор», «наложи анимацию на видео», «добавь подписи». NOT for merely watching a video or pulling its transcript to answer questions about it - that is a video-watching skill's job; transcription here is a paid ElevenLabs call, or free and local via mlx-whisper.
 ---
 
-# Video Use
+# cutroom
+
+Conversational video editing, based on [browser-use/video-use](https://github.com/browser-use/video-use).
 
 ## Principle
 
@@ -30,14 +32,14 @@ These are the things where deviation produces silent failures or broken output. 
 9. **Cache transcripts per source.** Never re-transcribe unless the source file itself changed.
 10. **Parallel sub-agents for multiple animations.** Never sequential. Spawn N at once via the `Agent` tool; total wall time ≈ slowest one.
 11. **Strategy confirmation before execution.** Never touch the cut until the user has approved the plain-English plan.
-12. **All session outputs in `<videos_dir>/edit/`.** Never write inside the `video-use/` project directory.
+12. **All session outputs in `<videos_dir>/edit/`.** Never write inside the skill directory: it is the plugin's install cache and is replaced on every update.
 13. **Cost confirmation before `transcribe_batch.py`.** Scribe bills per minute. Name the number of files and the total minutes that are not already cached in `transcripts/`, then wait for the user's go-ahead. This applies to the Inventory step too.
 
 Everything else in this document is a worked example. Deviate whenever the material calls for it.
 
 ## Directory layout
 
-The skill lives in `video-use/`. User footage lives wherever they put it. All session outputs go into `<videos_dir>/edit/`.
+The skill lives in the plugin's `skills/cutroom/`. User footage lives wherever they put it. All session outputs go into `<videos_dir>/edit/`.
 
 ```
 <videos_dir>/
@@ -58,22 +60,22 @@ The skill lives in `video-use/`. User footage lives wherever they put it. All se
 
 ## Setup
 
-First-time install lives in `install.md` (clone, deps, ffmpeg, skill registration, API key). Don't re-run it every session; on cold start just verify:
+The plugin brings the skill and its helpers; the tools below come from the system. On cold start verify:
 
-- `ELEVENLABS_API_KEY` resolves — either in the environment or in `.env` at the video-use repo root. If missing, never ask the user to paste the key into the chat: the transcript of this session is stored, so ask them to write `.env` themselves (`$EDITOR <repo>/.env`, then `chmod 600`) or to export the key from their password manager, and wait. If the user cannot get a key (ElevenLabs is geo-blocked for them), transcribe with `transcribe_local.py` instead and say what it loses.
+- A transcription path. Free and local: the `mlx_whisper` CLI (`uv tool install mlx-whisper`, Apple Silicon only; the model downloads on first use). Paid and better at fillers and timing: `ELEVENLABS_API_KEY` for Scribe, from the environment or from `.env` in the current directory (a `.env` inside the skill directory works but is wiped by plugin updates). Never ask the user to paste a key into the chat: the transcript of this session is stored, so ask them to export it from their password manager or write the `.env` themselves (`$EDITOR .env`, then `chmod 600`), and wait. Without a key, use `transcribe_local.py` and say what it loses.
+- `uv` on PATH: it builds the helpers' environment (see Helpers).
 - `ffmpeg` + `ffprobe` on PATH.
 - `ffmpeg -h filter=subtitles` and `ffmpeg -h filter=zscale` both print a filter description rather than `Unknown filter` (the exit code is 0 either way, read the text). Homebrew's default `ffmpeg` bottle is built without libass and libzimg, and then burning subtitles and tone-mapping HDR (iPhone HLG) sources fail at render time, not at plan time. If either filter is missing, stop and tell the user to reinstall ffmpeg with those libraries.
-- Python deps installed (`uv sync` inside the repo). There is no system `pip` or `python` on this machine and PEP 668 blocks global installs.
 - Node.js + npm available if the session needs HyperFrames or Remotion slots. HyperFrames currently requires Node.js 22+.
 - `yt-dlp`, HyperFrames, Remotion, Manim installed only on first use.
-- First-use animation setup happens inside the slot directory, never at the video-use repo root. HyperFrames can be invoked with `npx --yes hyperframes ...`; Remotion can be scaffolded with `npx create-video@latest` or installed as a project-local dependency before using its `remotion render` command.
-- This skill vendors `skills/manim-video/`. Read its SKILL.md when building a Manim slot.
+- First-use animation setup happens inside the slot directory, never in the skill directory. HyperFrames can be invoked with `npx --yes hyperframes ...`; Remotion can be scaffolded with `npx create-video@latest` or installed as a project-local dependency before using its `remotion render` command.
 
-Helpers (`helpers/transcribe.py`, `helpers/render.py`, etc.) live alongside this SKILL.md. Resolve their paths relative to the directory containing this file — the skill is typically symlinked at `~/.claude/skills/video-use/` or `~/.codex/skills/video-use/`.
+Helpers (`helpers/transcribe.py`, `helpers/render.py`, etc.) live alongside this SKILL.md. Resolve their paths relative to the directory containing this file (`<skill dir>` below).
 
 ## Helpers
 
-Run every helper with the repo interpreter: `<repo>/.venv/bin/python helpers/<script>.py`.
+Run every helper through uv against the skill's own project: `uv run --project <skill dir> python <skill dir>/helpers/<script>.py`.
+uv builds the environment from `pyproject.toml` and `uv.lock` on first use and again after a plugin update replaces the directory; nothing is installed globally.
 The system `python3` has none of the deps (numpy, requests), and `render.py` / `grade.py`
 print `--help` under it anyway, which makes a broken environment look healthy.
 
@@ -247,7 +249,7 @@ Pick the engine per animation slot. Do not default to Remotion just because the 
 
 - **HyperFrames** — Browser-native HTML/CSS/GSAP video compositions: product UI motion, website-to-video or mockup-to-video captures, kinetic typography, landing-page/storyboard promos, data-driven UI states, transparent WebM overlays, and clips that need deterministic frame capture plus HyperFrames lint/validate/render checks. Best when the animation should be authored and verified like a web composition instead of a React component tree.
 - **Remotion** — React/CSS compositions with component state, reusable React primitives, or an existing Remotion brand system. Best when the user specifically asks for React/Remotion or when React composition is the simpler authoring model.
-- **Manim** — formal diagrams, state machines, equation derivations, graph morphs. Read `skills/manim-video/SKILL.md` and its references for depth.
+- **Manim** — formal diagrams, state machines, equation derivations, graph morphs. Install Manim Community Edition inside the slot directory on first use.
 - **PIL + PNG sequence + ffmpeg** — simple overlay cards: counters, typewriter text, single bar reveals, progressive draws. Fast to iterate, any aesthetic you want. The launch video used this.
 
 For HyperFrames slots, scaffold the slot inside `edit/animations/slot_<id>/` with `npx --yes hyperframes init . --example blank --non-interactive --skip-skills`, build the HTML composition there, run the HyperFrames checks that fit the slot (`lint`, `validate`, and a draft render when practical), then produce the final overlay video with `npx --yes hyperframes render . -o render.mp4` or `--format webm -o render.webm` when alpha is required. Point the EDL overlay `file` at the actual rendered path.
