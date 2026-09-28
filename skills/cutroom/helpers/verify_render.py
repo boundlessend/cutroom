@@ -81,13 +81,15 @@ def seams_and_edges(video: Path, cuts: list[float], fps: float, sheet_path: Path
     with tempfile.TemporaryDirectory() as tmp:
         for i, c in enumerate(cuts):
             before = grab(video, c - 2 / fps, Path(tmp) / f"a{i}.png", 120)
-            after = grab(video, c + 1 / fps, Path(tmp) / f"b{i}.png", 120)
-            luma = np.asarray(grab(video, c + 1 / fps, Path(tmp) / f"e{i}.png", 360).convert("L"), dtype=np.float32)
+            # one decode of the incoming frame: the edge check needs it at 360 px, the sheet at 120
+            incoming = grab(video, c + 1 / fps, Path(tmp) / f"b{i}.png", 360)
+            after = incoming.resize(before.size, Image.LANCZOS)
+            luma = np.asarray(incoming.convert("L"), dtype=np.float32)
             if min(luma[:2].mean(), luma[-2:].mean(), luma[:, :2].mean(), luma[:, -2:].mean()) < DARK_EDGE_LUMA:
                 dark.append(i)
             pairs.append((before, after))
     w, h = pairs[0][0].size
-    cols = 12
+    cols = min(12, len(pairs))
     cell_w = 2 * w + 10
     sheet = Image.new("RGB", (cols * cell_w, ((len(pairs) + cols - 1) // cols) * (h + 4)), "black")
     d = ImageDraw.Draw(sheet)
