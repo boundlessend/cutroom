@@ -33,7 +33,7 @@ These are the things where deviation produces silent failures or broken output. 
 10. **Parallel sub-agents for multiple animations.** Never sequential. Spawn N at once via the `Agent` tool; total wall time ≈ slowest one.
 11. **Strategy confirmation before execution.** Never touch the cut until the user has approved the plain-English plan.
 12. **All session outputs in `<videos_dir>/edit/`.** Never write inside the skill directory: it is the plugin's install cache and is replaced on every update.
-13. **Cost confirmation before `transcribe_batch.py`.** Scribe bills per minute. Name the number of files and the total minutes that are not already cached in `transcripts/`, then wait for the user's go-ahead. This applies to the Inventory step too.
+13. **Cost confirmation before `transcribe.py` or `transcribe_batch.py`.** Scribe bills per minute, one file or many. Name the number of files and the total minutes that are not already cached in `transcripts/`, then wait for the user's go-ahead. This applies to the Inventory step too. `transcribe_local.py` is free and needs none.
 
 Everything else in this document is a worked example. Deviate whenever the material calls for it.
 
