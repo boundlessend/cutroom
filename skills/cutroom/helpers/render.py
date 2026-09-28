@@ -368,7 +368,10 @@ def extract_segment(
     fit = (f"scale={w}:{h}:force_original_aspect_ratio=decrease:force_divisible_by=2,"
            f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1")
 
-    vf_parts: list[str] = []
+    # The output rate first: a reframe `vf` times its motion by the frame counter
+    # `on`, which otherwise counts source frames (a 60 fps source rendered at 30
+    # ran every move at double speed).
+    vf_parts: list[str] = [f"fps={rate}"]
     if is_hdr_source(source):
         vf_parts.append(TONEMAP_CHAIN)
     vf_parts.append(fit)
@@ -411,7 +414,7 @@ def extract_segment(
         "-af", af,
         "-frames:v", str(frames),
         "-c:v", "libx264", "-preset", preset, "-crf", crf,
-        "-pix_fmt", "yuv420p", "-r", rate,
+        "-pix_fmt", "yuv420p",
         "-c:a", "pcm_s16le", "-ar", "48000", "-ac", "2",
         str(tmp),
     ]
