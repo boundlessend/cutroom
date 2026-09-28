@@ -36,19 +36,22 @@ RETRY_STATUS = {408, 429, 500, 502, 503, 504}
 
 
 def load_api_key() -> str:
-    for candidate in [Path(__file__).resolve().parent.parent / ".env", Path(".env")]:
-        if candidate.exists():
-            for line in candidate.read_text().splitlines():
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                k, v = line.split("=", 1)
-                if k.strip() == "ELEVENLABS_API_KEY":
-                    return v.strip().strip('"').strip("'")
+    """ELEVENLABS_API_KEY from the environment, else from .env in the current directory.
+    The environment wins, so a stale .env never overrides the key you exported. A .env
+    in the skill directory is not read: a plugin update replaces that directory."""
     v = os.environ.get("ELEVENLABS_API_KEY", "")
-    if not v:
-        sys.exit("ELEVENLABS_API_KEY not found in .env or environment")
-    return v
+    if v:
+        return v
+    env_file = Path(".env")
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            if k.strip() == "ELEVENLABS_API_KEY":
+                return v.strip().strip('"').strip("'")
+    sys.exit("ELEVENLABS_API_KEY is neither in the environment nor in .env in the current directory")
 
 
 def count_audio_tracks(video_path: Path) -> int:
