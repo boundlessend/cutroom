@@ -400,12 +400,14 @@ def extract_all_segments(
     draft: bool = False,
     fps: str | None = None,
 ) -> list[Path]:
-    """Extract every EDL range into edit_dir/clips_<quality>/seg_NN_<src>_<key>.mp4.
+    """Extract every EDL range into edit_dir/clips_<quality>/seg_<src>_<start>_<key>.mp4.
     Returns the ordered list of segment paths.
 
-    A segment whose cache key already has a file is reused, so re-rendering after
-    changing one range re-extracts one range. Files of older renders in the same
-    clips dir are removed at the end.
+    The clips dir is a content-addressed cache shared by every EDL in the edit
+    dir: a segment whose key already has a file is reused, so re-rendering after
+    changing one range re-extracts one range, and a sub-EDL (a part, a teaser)
+    renders from the full cut's segments. Nothing is pruned automatically, since
+    another EDL may still need a file; the clips dirs can be deleted at any time.
 
     If the EDL `grade` is "auto", analyze each segment range with
     `auto_grade_for_clip` and apply a per-segment subtle correction.
@@ -447,7 +449,7 @@ def extract_all_segments(
             seg_filter = ",".join(f for f in (seg_filter, r["vf"]) if f)
 
         key = segment_cache_key(src_path, start, frames, out_rate, seg_filter, quality, audio_track)
-        out_path = clips_dir / f"seg_{i:02d}_{src_name}_{key}.mp4"
+        out_path = clips_dir / f"seg_{src_name}_{start:09.3f}_{key}.mp4"
         note = r.get("beat") or r.get("note") or ""
         cached = out_path.exists()
         print(f"  [{i:02d}] {src_name}  {start:7.2f}-{end:7.2f}  ({duration:5.2f}s)  "
@@ -461,11 +463,7 @@ def extract_all_segments(
                             preview=preview, draft=draft, rate=out_rate, audio_track=audio_track)
         seg_paths.append(out_path)
 
-    keep = set(seg_paths)
-    stale = [p for p in clips_dir.glob("seg_*.mp4") if p not in keep]
-    for p in stale:
-        p.unlink()
-    print(f"  {reused} reused, {len(ranges) - reused} extracted, {len(stale)} stale removed")
+    print(f"  {reused} reused, {len(ranges) - reused} extracted")
     return seg_paths
 
 
