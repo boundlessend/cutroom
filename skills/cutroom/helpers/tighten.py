@@ -31,10 +31,12 @@ import sys
 import tempfile
 import wave
 from dataclasses import dataclass
+from fractions import Fraction
 from pathlib import Path
 
 import numpy as np
 
+from render import probe_source_fps
 from transcribe import extract_audio
 
 
@@ -150,10 +152,13 @@ def split_points(r: Range, words: list[Word], t: Tightening) -> list[float]:
     return sorted(set(points))
 
 
-def split_long(ranges: list[Range], words: list[Word], t: Tightening) -> list[Range]:
+def split_long(ranges: list[Range], words: list[Word], t: Tightening, fps: Fraction) -> list[Range]:
+    """Split points land on whole frames from the range start: the pieces then join
+    seamlessly in render.py, with no audio fade dipping the continuous sound."""
     out: list[Range] = []
     for r in ranges:
-        edges = [r.start, *split_points(r, words, t), r.end]
+        snapped = sorted({r.start + float(round((p - r.start) * fps) / fps) for p in split_points(r, words, t)})
+        edges = [r.start, *(p for p in snapped if r.start < p < r.end), r.end]
         for s, e in zip(edges, edges[1:]):
             out.append(Range(s, e, text_of(words, s, e)))
     return out
@@ -247,7 +252,11 @@ def main() -> None:
     t = Tightening(args.gap, args.pad_before, args.pad_after, args.min_range, args.split_long,
                    args.split_every, sorted(args.remove), sorted(args.topic))
     words = load_words(transcript)
-    ranges = split_long(merge_short(subtract(speech_ranges(words, t), t.removals, words), words, t), words, t)
+    rate = probe_source_fps(video)
+    if rate is None:
+        sys.exit(f"no frame rate in {video}")
+    ranges = split_long(merge_short(subtract(speech_ranges(words, t), t.removals, words), words, t), words, t,
+                        Fraction(rate))
     edl = build_edl(video, ranges, t)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(edl, ensure_ascii=False, indent=2))

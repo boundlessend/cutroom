@@ -341,8 +341,9 @@ def extract_segment(
     rate: str,
     audio_track: int,
     canvas: tuple[int, int],
+    audio_filter: str,
 ) -> None:
-    """Extract a cut range as its own MOV with grade + 30ms audio fades baked in.
+    """Extract a cut range as its own MOV with grade + audio edge fades baked in.
 
     `-ss` before `-i` for fast accurate seeking. The picture is fitted into the
     render's one `canvas`: a source of the same shape fills it, another shape (a
@@ -382,10 +383,6 @@ def extract_segment(
         vf_parts.append(grade_filter)
     vf = ",".join(vf_parts)
 
-    # 30ms audio fades at both edges (Rule 3) — prevent pops
-    fade_out_start = max(0.0, duration - 0.03)
-    af = f"afade=t=in:st=0:d=0.03,afade=t=out:st={fade_out_start:.3f}:d=0.03"
-
     if draft:
         preset, crf = "ultrafast", "28"
     elif preview:
@@ -408,13 +405,13 @@ def extract_segment(
 
     cmd = [
         "ffmpeg", "-y",
-        "-ss", f"{seg_start:.3f}",
+        "-ss", f"{seg_start:.6f}",
         "-i", str(source),
         *audio_in,
         "-t", f"{duration:.6f}",
         "-map", "0:v:0", "-map", audio_map,
         "-vf", vf,
-        "-af", af,
+        "-af", audio_filter,
         "-frames:v", str(frames),
         "-c:v", "libx264", "-preset", preset, "-crf", crf,
         "-pix_fmt", "yuv420p",
@@ -430,13 +427,38 @@ def extract_segment(
         tmp.unlink(missing_ok=True)
 
 
+def seamless_joins(ranges: list[dict], durations: list[float]) -> list[bool]:
+    """joins[i]: range i picks up where range i-1's rendered frames end, in the same
+    source, with no time removed (within 2 ms: EDL times are rounded to the
+    millisecond). tighten.py splits long ranges this way only to change the shot."""
+    joins = [False]
+    for prev, r, prev_duration in zip(ranges, ranges[1:], durations):
+        joins.append(
+            r["source"] == prev["source"]
+            and abs(float(r["start"]) - (float(prev["start"]) + prev_duration)) < 0.002
+        )
+    return joins
+
+
+def edge_fades(duration: float, fade_in: bool, fade_out: bool) -> str:
+    """30ms audio fades at a segment's cut edges (Rule 3): they prevent pops where time
+    was removed. A seamless join gets none: the sound runs on, and a fade would
+    dip it to silence for 60 ms."""
+    fades: list[str] = []
+    if fade_in:
+        fades.append("afade=t=in:st=0:d=0.03")
+    if fade_out:
+        fades.append(f"afade=t=out:st={max(0.0, duration - 0.03):.3f}:d=0.03")
+    return ",".join(fades) or "anull"
+
+
 # Bump when the extract command changes: it invalidates every cached segment.
-EXTRACT_VERSION = 4
+EXTRACT_VERSION = 5
 
 
 def segment_cache_key(
     source: Path, start: float, frames: int, rate: str, seg_filter: str, quality: str, audio_track: int,
-    canvas: tuple[int, int],
+    canvas: tuple[int, int], audio_filter: str,
 ) -> str:
     """Everything that shapes a segment's pixels and samples, hashed.
 
@@ -446,7 +468,7 @@ def segment_cache_key(
     st = source.stat()
     payload = json.dumps([
         EXTRACT_VERSION, str(source), st.st_size, st.st_mtime_ns,
-        round(start, 3), frames, rate, seg_filter, quality, audio_track, list(canvas),
+        round(start, 6), frames, rate, seg_filter, quality, audio_track, list(canvas), audio_filter,
     ])
     return hashlib.sha1(payload.encode()).hexdigest()[:12]
 
@@ -497,14 +519,21 @@ def extract_all_segments(
           f"{' (forced)' if fps is not None else ' (from source)'}, {canvas[0]}x{canvas[1]}")
     if is_auto:
         print("  (auto-grade per segment: analyzing each range)")
+    joins = seamless_joins(ranges, durations)
+    starts: list[float] = []
     reused = 0
     for i, r in enumerate(ranges):
         src_name = r["source"]
         src_path = resolve_path(sources[src_name], edit_dir)
-        start = float(r["start"])
         end = float(r["end"])
-        frames = segment_frames(start, end, out_rate)
-        duration = segment_duration(start, end, out_rate)
+        frames = segment_frames(float(r["start"]), end, out_rate)
+        duration = durations[i]
+        # a seamless follower starts exactly where the previous segment's frames end,
+        # not at its millisecond-rounded EDL start, so the sound carries on sample-exact
+        start = starts[i - 1] + durations[i - 1] if joins[i] else float(r["start"])
+        starts.append(start)
+        next_joins = i + 1 < len(ranges) and joins[i + 1]
+        audio_filter = edge_fades(duration, fade_in=not joins[i], fade_out=not next_joins)
 
         if is_auto:
             seg_filter, _stats = auto_grade_for_clip(src_path, start=start, duration=duration, verbose=False)
@@ -517,7 +546,8 @@ def extract_all_segments(
                      "reframe.py: drop the `vf`, render.py now zooms from `frame` itself")
         seg_filter = ",".join(f for f in (seg_filter, zooms[i] if zooms else "", r.get("vf", "")) if f)
 
-        key = segment_cache_key(src_path, start, frames, out_rate, seg_filter, quality, audio_track, canvas)
+        key = segment_cache_key(src_path, start, frames, out_rate, seg_filter, quality, audio_track, canvas,
+                                audio_filter)
         out_path = clips_dir / f"seg_{src_name}_{start:09.3f}_{key}.mov"
         note = r.get("beat") or r.get("note") or ""
         cached = out_path.exists()
@@ -530,7 +560,7 @@ def extract_all_segments(
         else:
             extract_segment(src_path, start, frames, seg_filter, out_path,
                             preview=preview, draft=draft, rate=out_rate, audio_track=audio_track,
-                            canvas=canvas)
+                            canvas=canvas, audio_filter=audio_filter)
         seg_paths.append(out_path)
 
     print(f"  {reused} reused, {len(ranges) - reused} extracted")
