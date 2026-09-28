@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -327,6 +328,7 @@ def extract_segment(
       - draft:           720p libx264 ultrafast CRF 28 (cut-point check only)
     """
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out_path.with_name(f"{out_path.stem}.{os.getpid()}.part{out_path.suffix}")
     duration = float(frames / Fraction(rate))
 
     portrait = is_portrait_source(source)
@@ -367,9 +369,15 @@ def extract_segment(
         "-pix_fmt", "yuv420p", "-r", rate,
         "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
         "-movflags", "+faststart",
-        str(out_path),
+        str(tmp),
     ]
-    ffmpeg(cmd)
+    # The cache trusts any file under the final name, and a failed or interrupted
+    # ffmpeg still leaves a valid but short file, so only a finished segment gets it.
+    try:
+        ffmpeg(cmd)
+        tmp.replace(out_path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 # Bump when the extract command changes: it invalidates every cached segment.
