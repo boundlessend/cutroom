@@ -3,11 +3,12 @@
 Implements the HEURISTICS render pipeline in the correct order:
 
   1. Per-segment extract with color grade + 30ms audio fades baked in, each
-     range cut to whole frames and cached by what shapes it
-  2. Lossless -c copy concat into base.mp4
+     range cut to whole frames and cached by what shapes it; audio stays PCM
+  2. Lossless -c copy concat into a base MOV
   3. If overlays, ASS titles or subtitles: single filter graph that overlays
      animations (with PTS shift so frame 0 lands at the overlay window start),
-     burns the EDL's `ass` file as designed, and applies `subtitles` LAST → final.mp4
+     burns the EDL's `ass` file as designed, and applies `subtitles` LAST
+  4. Loudness normalization and the one AAC encode of the audio → output
 
 Optionally builds a master SRT from the per-source transcripts + EDL
 output-timeline offsets, applies the proven force_style (2-word
@@ -313,7 +314,7 @@ def extract_segment(
     rate: str,
     audio_track: int,
 ) -> None:
-    """Extract a cut range as its own MP4 with grade + 30ms audio fades baked in.
+    """Extract a cut range as its own MOV with grade + 30ms audio fades baked in.
 
     `-ss` before `-i` for fast accurate seeking. Scale to 1080p from 4K.
     Portrait sources (height > width) are scaled by height to preserve orientation.
@@ -321,6 +322,10 @@ def extract_segment(
     the segment is as long as `segment_duration()` says and the timeline adds up.
     Streams are mapped explicitly: an iPhone file carries stereo AAC next to
     spatial APAC, and ffmpeg's default pick is the stream with the most channels.
+    Audio stays PCM: an AAC segment carries 1024 samples of encoder delay plus
+    padding to a whole AAC frame, and the `-c copy` concat stacks them, so speech
+    fell 20–35 ms further behind the picture at every cut (1.26 s after 62 cuts).
+    The mix is encoded to AAC once, at the end.
 
     Quality ladder:
       - final (default): 1080p libx264 fast CRF 20
@@ -367,8 +372,7 @@ def extract_segment(
         "-frames:v", str(frames),
         "-c:v", "libx264", "-preset", preset, "-crf", crf,
         "-pix_fmt", "yuv420p", "-r", rate,
-        "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
-        "-movflags", "+faststart",
+        "-c:a", "pcm_s16le", "-ar", "48000", "-ac", "2",
         str(tmp),
     ]
     # The cache trusts any file under the final name, and a failed or interrupted
@@ -381,7 +385,7 @@ def extract_segment(
 
 
 # Bump when the extract command changes: it invalidates every cached segment.
-EXTRACT_VERSION = 2
+EXTRACT_VERSION = 3
 
 
 def segment_cache_key(
@@ -407,7 +411,7 @@ def extract_all_segments(
     draft: bool = False,
     fps: str | None = None,
 ) -> list[Path]:
-    """Extract every EDL range into edit_dir/clips_<quality>/seg_<src>_<start>_<key>.mp4.
+    """Extract every EDL range into edit_dir/clips_<quality>/seg_<src>_<start>_<key>.mov.
     Returns the ordered list of segment paths.
 
     The clips dir is a content-addressed cache shared by every EDL in the edit
@@ -456,7 +460,7 @@ def extract_all_segments(
             seg_filter = ",".join(f for f in (seg_filter, r["vf"]) if f)
 
         key = segment_cache_key(src_path, start, frames, out_rate, seg_filter, quality, audio_track)
-        out_path = clips_dir / f"seg_{src_name}_{start:09.3f}_{key}.mp4"
+        out_path = clips_dir / f"seg_{src_name}_{start:09.3f}_{key}.mov"
         note = r.get("beat") or r.get("note") or ""
         cached = out_path.exists()
         print(f"  [{i:02d}] {src_name}  {start:7.2f}-{end:7.2f}  ({duration:5.2f}s)  "
@@ -478,7 +482,7 @@ def extract_all_segments(
 
 
 def concat_segments(segment_paths: list[Path], out_path: Path, edit_dir: Path) -> None:
-    """Lossless concat via the concat demuxer. No re-encode."""
+    """Lossless concat via the concat demuxer. No re-encode; the audio is still PCM."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
     concat_list = edit_dir / "_concat.txt"
     concat_list.write_text("".join(f"file '{p.resolve()}'\n" for p in segment_paths))
@@ -488,7 +492,6 @@ def concat_segments(segment_paths: list[Path], out_path: Path, edit_dir: Path) -
         "-f", "concat", "-safe", "0",
         "-i", str(concat_list),
         "-c", "copy",
-        "-movflags", "+faststart",
         str(out_path),
     ]
     print(f"concat → {out_path.name}")
@@ -738,6 +741,17 @@ def apply_loudnorm_two_pass(
     return True
 
 
+def encode_audio(input_path: Path, output_path: Path) -> None:
+    """Copy the video and encode the PCM mix to AAC (the --no-loudnorm path)."""
+    ffmpeg([
+        "ffmpeg", "-y", "-i", str(input_path),
+        "-c:v", "copy",
+        "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+        "-movflags", "+faststart",
+        str(output_path),
+    ])
+
+
 # -------- Final compositing (Rule 1 + Rule 4) -------------------------------
 
 
@@ -753,16 +767,11 @@ def build_final_composite(
 
     The EDL's `ass` file is burned as written: unlike subtitles it gets no
     force_style, so its own fonts, positions and animation tags survive.
-    If there is nothing to composite, just copy base to out.
+    `out_path` is an intermediate MOV: the audio is copied as PCM and encoded once, later.
     """
     has_overlays = bool(overlays)
     has_ass = ass_path is not None
     has_subs = subtitles_path is not None and subtitles_path.exists()
-
-    if not has_overlays and not has_ass and not has_subs:
-        # Nothing to do — just rename/copy base to final name
-        ffmpeg(["ffmpeg", "-y", "-i", str(base_path), "-c", "copy", str(out_path)])
-        return
 
     inputs: list[str] = ["-i", str(base_path)]
     for ov in overlays:
@@ -818,7 +827,6 @@ def build_final_composite(
         "-c:v", "libx264", "-preset", "fast", "-crf", "18",
         "-pix_fmt", "yuv420p",
         "-c:a", "copy",
-        "-movflags", "+faststart",
         str(out_path),
     ]
     print(f"compositing → {out_path.name}")
@@ -886,11 +894,11 @@ def main() -> None:
 
     # 2. Concat → base
     if args.draft:
-        base_name = "base_draft.mp4"
+        base_name = "base_draft.mov"
     elif args.preview:
-        base_name = "base_preview.mp4"
+        base_name = "base_preview.mov"
     else:
-        base_name = "base.mp4"
+        base_name = "base.mov"
     base_path = edit_dir / base_name
     concat_segments(segment_paths, base_path, edit_dir)
 
@@ -909,19 +917,23 @@ def main() -> None:
         if not ass_path.exists():
             sys.exit(f"ass file in EDL not found: {ass_path}")
 
-    # 4. Composite (overlays + ASS titles + subtitles LAST) → intermediate (pre-loudnorm) path
+    # 4. Composite (overlays + ASS titles + subtitles LAST), audio still PCM
     overlays = edl.get("overlays") or []
-    if args.no_loudnorm:
-        # Composite directly to final output
-        build_final_composite(base_path, overlays, ass_path, subs_path, out_path, edit_dir)
+    if overlays or ass_path or subs_path:
+        composite_path = out_path.with_suffix(".composite.mov")
+        build_final_composite(base_path, overlays, ass_path, subs_path, composite_path, edit_dir)
     else:
-        # Composite to a temp file, then run loudnorm → final output
-        tmp_composite = out_path.with_suffix(".prenorm.mp4")
-        build_final_composite(base_path, overlays, ass_path, subs_path, tmp_composite, edit_dir)
+        composite_path = base_path
+
+    # 5. The one AAC encode of the audio
+    if args.no_loudnorm:
+        encode_audio(composite_path, out_path)
+    else:
         print(f"loudness normalization → social-ready ({LOUDNORM_I:g} LUFS / {LOUDNORM_TP:g} dBTP "
               f"delivered, limiter at {LIMITER_TP:g} / LRA {LOUDNORM_LRA:g})")
-        apply_loudnorm_two_pass(tmp_composite, out_path, preview=args.draft)
-        tmp_composite.unlink(missing_ok=True)
+        apply_loudnorm_two_pass(composite_path, out_path, preview=args.draft)
+    if composite_path != base_path:
+        composite_path.unlink(missing_ok=True)
 
     size_mb = out_path.stat().st_size / (1024 * 1024)
     print(f"\ndone: {out_path} ({size_mb:.1f} MB)")
