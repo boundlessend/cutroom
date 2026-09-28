@@ -61,10 +61,14 @@ SUB_FORCE_STYLE = (
 # -------- Helpers ------------------------------------------------------------
 
 
-def run(cmd: list[str], quiet: bool = False) -> None:
-    if not quiet:
-        print(f"  $ {' '.join(str(c) for c in cmd[:6])}{' …' if len(cmd) > 6 else ''}")
-    subprocess.run(cmd, check=True)
+def ffmpeg(cmd: list[str]) -> None:
+    """Run an ffmpeg command quietly. On failure raise with the tail of its stderr:
+    the exit code alone says nothing, and a reframe `vf` makes the command line 11 KB."""
+    proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    if proc.returncode != 0:
+        line = " ".join(cmd)
+        shown = line if len(line) <= 400 else line[:400] + " …"
+        raise RuntimeError(f"ffmpeg failed (exit {proc.returncode}): {shown}\n{proc.stderr.strip()[-1500:]}")
 
 
 def resolve_grade_filter(grade_field: str | None) -> str:
@@ -370,7 +374,7 @@ def extract_segment(
         "-movflags", "+faststart",
         str(out_path),
     ]
-    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    ffmpeg(cmd)
 
 
 # Bump when the extract command changes: it invalidates every cached segment.
@@ -485,7 +489,7 @@ def concat_segments(segment_paths: list[Path], out_path: Path, edit_dir: Path) -
         str(out_path),
     ]
     print(f"concat → {out_path.name}")
-    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    ffmpeg(cmd)
     concat_list.unlink(missing_ok=True)
 
 
@@ -694,7 +698,7 @@ def apply_loudnorm_two_pass(
             str(output_path),
         ]
         print(f"  loudnorm (1-pass preview) → {output_path.name}")
-        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        ffmpeg(cmd)
         return True
 
     # Full two-pass
@@ -727,7 +731,7 @@ def apply_loudnorm_two_pass(
         str(output_path),
     ]
     print(f"  loudnorm pass 2: normalizing → {output_path.name}")
-    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    ffmpeg(cmd)
     return True
 
 
@@ -754,7 +758,7 @@ def build_final_composite(
 
     if not has_overlays and not has_ass and not has_subs:
         # Nothing to do — just rename/copy base to final name
-        run(["ffmpeg", "-y", "-i", str(base_path), "-c", "copy", str(out_path)], quiet=True)
+        ffmpeg(["ffmpeg", "-y", "-i", str(base_path), "-c", "copy", str(out_path)])
         return
 
     inputs: list[str] = ["-i", str(base_path)]
@@ -817,7 +821,7 @@ def build_final_composite(
     print(f"compositing → {out_path.name}")
     print(f"  overlays: {len(overlays)}, ass titles: {'yes' if has_ass else 'no'}, "
           f"subtitles: {'yes' if has_subs else 'no'}")
-    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    ffmpeg(cmd)
 
 
 # -------- Main ---------------------------------------------------------------

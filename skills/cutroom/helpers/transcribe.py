@@ -78,7 +78,12 @@ def extract_audio(video_path: Path, dest: Path, audio_track: int = 0) -> None:
         "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le",
         str(dest),
     ]
-    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"ffmpeg could not extract audio track {audio_track + 1} of {video_path.name} "
+            f"(exit {proc.returncode}): {proc.stderr.strip()[-800:]}"
+        )
 
 
 def call_scribe(
