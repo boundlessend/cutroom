@@ -1,6 +1,6 @@
 """Render a video from an EDL.
 
-Implements the HEURISTICS render pipeline in the correct order:
+Implements the render pipeline of SKILL.md's Hard Rules, in this order:
 
   1. Per-segment extract with color grade + 30ms audio fades baked in, each
      range cut to whole frames and cached by what shapes it; audio stays PCM
@@ -12,7 +12,7 @@ Implements the HEURISTICS render pipeline in the correct order:
 
 Optionally builds a master SRT from the per-source transcripts + EDL
 output-timeline offsets, applies the proven force_style (2-word
-UPPERCASE chunks, Helvetica 18 Bold, MarginV=35).
+UPPERCASE chunks, Helvetica 18 Bold, MarginV=90).
 
 Usage:
     python helpers/render.py <edl.json> -o final.mp4

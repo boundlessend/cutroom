@@ -69,7 +69,7 @@ def extract_frames(video: Path, start: float, end: float, n: int, dest_dir: Path
     return paths
 
 
-# -------- Audio envelope (librosa if available, ffmpeg fallback) ------------
+# -------- Audio envelope (ffmpeg PCM, numpy RMS) ---------------------------
 
 
 def compute_envelope(video: Path, start: float, end: float, audio_track: int, samples: int = 2000) -> np.ndarray:
@@ -93,7 +93,6 @@ def compute_envelope(video: Path, start: float, end: float, audio_track: int, sa
         if r.returncode != 0 or not wav.exists() or wav.stat().st_size == 0:
             return np.zeros(samples)
 
-        # Read the WAV manually — avoid librosa as a hard dep
         import wave
         with wave.open(str(wav), "rb") as w:
             frames = w.readframes(w.getnframes())

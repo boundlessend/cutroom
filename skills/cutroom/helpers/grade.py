@@ -48,7 +48,7 @@ PRESETS: dict[str, str] = {
 
     # OPT-IN creative preset for retro/cinematic looks ONLY. Not a default.
     # +12% contrast, crushed blacks, -12% sat, warm shadows + cool highs, filmic curve.
-    # Originally from HEURISTICS §6 — too aggressive for standard launch content.
+    # Too aggressive for standard launch content.
     "warm_cinematic": (
         "eq=contrast=1.12:brightness=-0.02:saturation=0.88,"
         "colorbalance="
