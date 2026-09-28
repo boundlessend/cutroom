@@ -17,7 +17,7 @@ Based on [browser-use/video-use](https://github.com/browser-use/video-use) by Br
 ## What changed from video-use
 
 - Local transcription helper (`transcribe_local.py`) as an alternative to ElevenLabs.
-- New helpers: `tighten.py`, `reframe.py`, `verify_render.py`, and `timeline_view.py --edl`.
+- New helpers: `tighten.py`, `verify_render.py`, `timeline_view.py --edl`, and reframing from per-range `frame` targets.
 - `render.py`: whole-frame segments so subtitles and titles no longer drift from the speech, explicit audio stream mapping, a segment cache shared by every EDL in an edit folder, an `ass` titles field, and true-peak fixes after loudnorm.
 - Helpers run in a `uv` project environment with only the dependencies they import.
 - The vendored `manim-video` skill and the Browser Use branding are not included.

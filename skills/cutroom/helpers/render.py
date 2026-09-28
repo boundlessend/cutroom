@@ -34,6 +34,7 @@ from fractions import Fraction
 from pathlib import Path
 
 from grade import auto_grade_for_clip, get_preset  # same directory
+from reframe import zoom_filters
 from transcribe import count_audio_tracks
 
 
@@ -485,6 +486,12 @@ def extract_all_segments(
     audio_track = int(edl.get("audio_track", 0))
     out_rate = resolve_output_rate(edl, edit_dir, fps)
 
+    durations = [segment_duration(float(r["start"]), float(r["end"]), out_rate) for r in ranges]
+    try:
+        zooms = zoom_filters(ranges, durations, out_rate, edl.get("reframe") or {})
+    except ValueError as exc:
+        sys.exit(str(exc))
+
     seg_paths: list[Path] = []
     print(f"extracting {len(ranges)} segment(s) → {clips_dir.name}/  @ {out_rate} fps"
           f"{' (forced)' if fps is not None else ' (from source)'}, {canvas[0]}x{canvas[1]}")
@@ -503,9 +510,12 @@ def extract_all_segments(
             seg_filter, _stats = auto_grade_for_clip(src_path, start=start, duration=duration, verbose=False)
         else:
             seg_filter = resolved
-        # Per-range reframe/zoom rides after the canvas fit and grade, inside the same extract (Rule 2)
-        if r.get("vf"):
-            seg_filter = ",".join(f for f in (seg_filter, r["vf"]) if f)
+        # The zoom from the range's `frame` target, then its own `vf`, ride after the
+        # canvas fit and grade, inside the same extract (Rule 2)
+        if zooms and str(r.get("vf", "")).startswith("perspective="):
+            sys.exit(f"range {i} has a `frame` target and a zoom baked into `vf` by the old "
+                     "reframe.py: drop the `vf`, render.py now zooms from `frame` itself")
+        seg_filter = ",".join(f for f in (seg_filter, zooms[i] if zooms else "", r.get("vf", "")) if f)
 
         key = segment_cache_key(src_path, start, frames, out_rate, seg_filter, quality, audio_track, canvas)
         out_path = clips_dir / f"seg_{src_name}_{start:09.3f}_{key}.mov"

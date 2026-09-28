@@ -7,7 +7,7 @@ more between words becomes a cut; each kept range is padded by --pad-before and
   --remove A-B   drop a stretch of source time (a retake, a slip, walking out of frame)
   --topic T      a new subject starts at source time T: the range is split there if it
                  runs through T, and the range starting at T is marked "topic": true
-                 (reframe.py pushes into that cut)
+                 (the zoom pushes into that cut)
 
 Two rules keep the rhythm from turning choppy: a range shorter than --min-range is
 glued to its predecessor together with the pause between them (no framing change

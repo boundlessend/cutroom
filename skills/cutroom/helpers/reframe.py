@@ -1,10 +1,14 @@
-"""Fill every EDL range's `vf` with a continuous zoom from its `frame` target.
+"""Continuous zoom for every EDL range from its `frame` target.
+
+render.py calls `zoom_filters()` while extracting, so the zoom always follows the
+output rate and canvas of that render and the EDL keeps only the targets (a
+baked `vf` ran to 11 KB per range: 685 KB of EDL for a 6-minute cut).
 
 Punch-ins that jump in scale at the cut read as harsh. Here scale and anchor are
 continuous across every cut: a range starts exactly where its predecessor ended
-and eases (in-out cubic) to its own target over --settle seconds, at most 70% of
+and eases (in-out cubic) to its own target over `settle` seconds, at most 70% of
 the range. Inside the range a slow drift keeps the shot alive; before a range
-marked "topic": true the outgoing range pushes in over its last --push seconds
+marked "topic": true the outgoing range pushes in over its last `push` seconds
 and the next one carries on from there. The motion is timed to the range's last
 frame (duration - 1/fps), otherwise the next range starts one frame's worth of
 motion away and the cut jumps.
@@ -20,26 +24,19 @@ Range fields read:
   drift  optional total drift over the range as a fraction of zoom; default pushes
          in on an unzoomed shot and pulls out on a zoomed one, 0.8% per second up to 4%
 
-Choosing the targets is the editor's call, not this script's: alternate shot sizes
+EDL field read, all optional:
+  reframe  {"settle": 1.0, "push": 0.4, "push_amp": 0.10}
+
+Choosing the targets is the editor's call, not this module's: alternate shot sizes
 between neighbouring ranges, and keep a close-up off ranges where the subject holds
 something at chest height (it gets cropped). A range under ~0.8 s should not change
 shot at all (tighten.py merges those).
-
-Usage:
-    python helpers/reframe.py <edl.json> -o <edl.json>
-    python helpers/reframe.py <edl.json> -o <edl.json> --settle 0.8 --push 0.3 --push-amp 0.08
 """
 
 from __future__ import annotations
 
-import argparse
-import json
-import sys
 from dataclasses import dataclass
 from fractions import Fraction
-from pathlib import Path
-
-from render import resolve_output_rate, segment_duration
 
 
 @dataclass(frozen=True)
@@ -126,14 +123,27 @@ def default_drift(target: Frame, dur: float) -> float:
     return magnitude if target.z <= 1.001 else -magnitude
 
 
-def reframe(edl: dict, rate: str, settle: float, push: float, push_amp: float) -> dict:
+SETTLE_S = 1.0
+PUSH_S = 0.4
+PUSH_AMP = 0.10
+
+
+def zoom_filters(ranges: list[dict], durations: list[float], rate: str, tuning: dict) -> list[str]:
+    """One perspective `vf` per range, in order; empty when no range has a `frame` target.
+
+    `durations` are the rendered, whole-frame range durations; `tuning` is the
+    EDL's optional `reframe` object.
+    """
+    if not any("frame" in r for r in ranges):
+        return []
+    settle = float(tuning.get("settle", SETTLE_S))
+    push = float(tuning.get("push", PUSH_S))
+    push_amp = float(tuning.get("push_amp", PUSH_AMP))
     fps = float(Fraction(rate))
-    ranges = edl["ranges"]
     state = target_of(ranges[0], 0)
-    out_ranges: list[dict] = []
-    for i, r in enumerate(ranges):
+    filters: list[str] = []
+    for i, (r, dur) in enumerate(zip(ranges, durations)):
         target = target_of(r, i)
-        dur = segment_duration(float(r["start"]), float(r["end"]), rate)
         pushes = i + 1 < len(ranges) and bool(ranges[i + 1].get("topic"))
         drift = float(r["drift"]) if "drift" in r else default_drift(target, dur)
         move = Move(
@@ -146,34 +156,6 @@ def reframe(edl: dict, rate: str, settle: float, push: float, push_amp: float) -
             push_out=min(push, 0.3 * dur) if pushes else 0.0,
             push_amp=push_amp,
         )
-        out_ranges.append({**r, "vf": perspective_filter(*expressions(move, fps))})
+        filters.append(perspective_filter(*expressions(move, fps)))
         state = end_frame(move)
-    return {**edl, "ranges": out_ranges}
-
-
-def main() -> None:
-    ap = argparse.ArgumentParser(description="Continuous zoom vf for every EDL range from its frame target")
-    ap.add_argument("edl", type=Path, help="EDL whose ranges carry a frame target")
-    ap.add_argument("-o", "--output", type=Path, required=True, help="EDL to write (may be the input)")
-    ap.add_argument("--settle", type=float, default=1.0, help="Seconds to ease into a range's target (default 1.0)")
-    ap.add_argument("--push", type=float, default=0.4, help="Push-in before a topic cut, seconds (default 0.4)")
-    ap.add_argument("--push-amp", type=float, default=0.10, help="Push-in amount as a zoom fraction (default 0.10)")
-    ap.add_argument("--fps", type=str, default=None, help="Output rate if render.py gets --fps (default: source rate)")
-    args = ap.parse_args()
-
-    edl_path = args.edl.resolve()
-    if not edl_path.exists():
-        sys.exit(f"edl not found: {edl_path}")
-    edl = json.loads(edl_path.read_text())
-    rate = resolve_output_rate(edl, edl_path.parent, args.fps)
-    try:
-        out = reframe(edl, rate, args.settle, args.push, args.push_amp)
-    except ValueError as exc:
-        sys.exit(str(exc))
-    args.output.write_text(json.dumps(out, ensure_ascii=False, indent=2))
-    pushes = sum(1 for r in edl["ranges"][1:] if r.get("topic"))
-    print(f"vf written for {len(out['ranges'])} ranges @ {rate} fps, {pushes} topic push(es) → {args.output}")
-
-
-if __name__ == "__main__":
-    main()
+    return filters

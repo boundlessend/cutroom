@@ -32,7 +32,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from render import output_offsets, resolve_output_rate, segment_duration
+from render import output_offsets, probe_source_fps, segment_duration
 from transcribe import extract_audio
 from transcribe_local import run_whisper
 
@@ -149,13 +149,15 @@ def main() -> None:
     ap.add_argument("edl", type=Path, help="The EDL it was rendered from")
     ap.add_argument("--retranscribe", metavar="LANG", choices=["ru", "en"], default=None,
                     help="Transcribe the render locally and diff its words with the EDL's")
-    ap.add_argument("--fps", type=str, default=None, help="Rate passed to render.py --fps, if any")
     args = ap.parse_args()
 
     video, edl_path = args.video.resolve(), args.edl.resolve()
     edl = json.loads(edl_path.read_text())
     edit_dir = edl_path.parent
-    rate = resolve_output_rate(edl, edit_dir, args.fps)
+    # the render's own rate, so a render.py --fps needs no repeating here
+    rate = probe_source_fps(video)
+    if rate is None:
+        sys.exit(f"no frame rate in {video}")
     fps = float(Fraction(rate))
     offsets = output_offsets(edl, rate)
     last = edl["ranges"][-1]
