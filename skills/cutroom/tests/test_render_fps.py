@@ -61,6 +61,12 @@ class ProbeSourceFpsTests(unittest.TestCase):
         with patch.object(render.subprocess, "run", return_value=result):
             self.assertEqual(render.probe_source_fps(Path("source.mp4")), "30000/1001")
 
+    def test_phone_average_snaps_to_nominal_rate(self):
+        # an iPhone VFR take: rendering at the average gave a 29.993 fps file
+        result = self._probe_result("276925/9233", "30/1")
+        with patch.object(render.subprocess, "run", return_value=result):
+            self.assertEqual(render.probe_source_fps(Path("source.mp4")), "30/1")
+
     def test_falls_back_to_nominal_rate(self):
         result = self._probe_result("0/0", "60/1")
         with patch.object(render.subprocess, "run", return_value=result):

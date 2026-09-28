@@ -236,12 +236,14 @@ def parse_fps(value: str) -> str:
 
 
 def probe_source_fps(video: Path) -> str | None:
-    """Return an ffmpeg-ready source rate, preferring the average frame rate.
+    """Return an ffmpeg-ready source rate.
 
-    ``avg_frame_rate`` represents the observed average and is the better default
-    for variable-frame-rate inputs. ``r_frame_rate`` remains a fallback for
-    streams where the average is unavailable. Values are normalized to an exact
-    rational so rates such as ``30000/1001`` survive without rounding.
+    ``avg_frame_rate`` is the observed average and the better default for
+    variable-frame-rate inputs, but a phone's average sits a hair off its nominal
+    rate: an iPhone take averaging 276925/9233 (29.993) rendered as a 29.993 fps
+    file with a 1/276925 timebase. So the nominal ``r_frame_rate`` wins when the
+    two agree within 0.05%, and is the fallback when there is no average. Values
+    are normalized to an exact rational so rates such as ``30000/1001`` survive.
     """
     try:
         out = subprocess.run(
@@ -253,16 +255,20 @@ def probe_source_fps(video: Path) -> str | None:
         streams = json.loads(out.stdout).get("streams") or []
         if not streams:
             return None
+        rates: dict[str, str] = {}
         for field in ("avg_frame_rate", "r_frame_rate"):
             value = streams[0].get(field)
             if value and value != "0/0":
                 try:
-                    return parse_fps(value)
+                    rates[field] = parse_fps(value)
                 except argparse.ArgumentTypeError:
                     continue
     except (subprocess.CalledProcessError, json.JSONDecodeError, OSError):
         return None
-    return None
+    avg, nominal = rates.get("avg_frame_rate"), rates.get("r_frame_rate")
+    if avg and nominal and abs(Fraction(avg) / Fraction(nominal) - 1) < Fraction(1, 2000):
+        return nominal
+    return avg or nominal
 
 
 def resolve_output_rate(edl: dict, edit_dir: Path, fps: str | None) -> str:
