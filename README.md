@@ -28,7 +28,7 @@ Based on [browser-use/video-use](https://github.com/browser-use/video-use) by Br
 - [uv](https://docs.astral.sh/uv/) on `PATH`: it builds the helpers' Python environment on first use.
 - `ffmpeg` and `ffprobe` built with libass and libzimg (the `subtitles`, `ass` and `zscale` filters). Homebrew's default `ffmpeg` lacks both; `ffmpeg-full` has them.
 - A transcription path:
-  - free: macOS on Apple Silicon and `uv tool install mlx-whisper`;
+  - free: macOS on Apple Silicon and `uv tool install mlx-whisper`, any language Whisper knows (fillers are kept best in Russian and English);
   - paid: `ELEVENLABS_API_KEY` in the environment.
 - Node.js 22+ only for HyperFrames or Remotion animations.
 

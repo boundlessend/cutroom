@@ -6,8 +6,10 @@ Scribe-shaped JSON (`words` of type/text/start/end) to the same
 render read it unchanged and the cache is shared with transcribe.py.
 
 What Scribe gives and this does not: speaker diarization, audio events,
-fully verbatim fillers. Whisper tends to clean up "эм" and stutters; a
-disfluent initial prompt keeps most of them, not all. Word edges come from
+fully verbatim fillers. Whisper tends to clean up "эм" and stutters; for
+Russian and English a disfluent initial prompt keeps most of them, not all.
+Any other language Whisper knows works too, without that prompt, so expect
+fewer fillers in its text. Word edges come from
 cross-attention alignment and are looser than Scribe's, so pad cuts toward
 the top of the 30-200ms window and check boundaries by ear.
 
@@ -16,6 +18,7 @@ Needs the `mlx_whisper` CLI on PATH (`uv tool install mlx-whisper`).
 Usage:
     python helpers/transcribe_local.py <video_or_dir> --language ru
     python helpers/transcribe_local.py <video_or_dir> --language ru --audio-track 1
+    python helpers/transcribe_local.py <video_or_dir> --language de
 """
 
 from __future__ import annotations
@@ -43,11 +46,12 @@ FILLER_PROMPTS = {
 
 
 def run_whisper(audio: Path, language: str, out_dir: Path) -> dict:
+    prompt = FILLER_PROMPTS.get(language)
     cmd = [
         "mlx_whisper", str(audio),
         "--model", MODEL,
         "--language", language,
-        "--initial-prompt", FILLER_PROMPTS[language],
+        *(["--initial-prompt", prompt] if prompt else []),
         "--word-timestamps", "True",
         "--hallucination-silence-threshold", "2",
         "--output-format", "json",
@@ -119,8 +123,7 @@ def main() -> None:
     ap.add_argument(
         "--language",
         required=True,
-        choices=sorted(FILLER_PROMPTS),
-        help="Spoken language; selects the filler prompt",
+        help="Spoken language as Whisper's code (ru, en, de, es...); ru and en get a filler prompt",
     )
     ap.add_argument(
         "--audio-track",

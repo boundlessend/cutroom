@@ -134,7 +134,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Self-eval of a rendered cut against its EDL")
     ap.add_argument("video", type=Path, help="Rendered file")
     ap.add_argument("edl", type=Path, help="The EDL it was rendered from")
-    ap.add_argument("--retranscribe", metavar="LANG", choices=["ru", "en"], default=None,
+    ap.add_argument("--retranscribe", metavar="LANG", default=None,
                     help="Transcribe the render locally and diff its words with the EDL's")
     args = ap.parse_args()
 
