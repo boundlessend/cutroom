@@ -174,12 +174,14 @@ def is_topic_start(r: Range, t: Tightening) -> bool:
     return any(r.start <= tp <= r.start + t.pad_before + 0.15 for tp in t.topics)
 
 
-def pause_cuts(words: list[Word], t: Tightening) -> list[tuple[float, float, str, str]]:
-    """Every pause the tightening removes: (gap start, gap end, word before, word after)."""
+def pause_cuts(words: list[Word], ranges: list[Range], t: Tightening) -> list[tuple[float, float, str, str]]:
+    """Every pause the tightening removes: (gap start, gap end, word before, word after).
+    A pause a kept range spans (merge_short glued it in) is not cut, so not audited."""
     cuts: list[tuple[float, float, str, str]] = []
     for prev, nxt in zip(words, words[1:]):
         inside_removal = any(a <= prev.end and nxt.start <= b for a, b in t.removals)
-        if nxt.start - prev.end >= t.gap and not inside_removal:
+        kept = any(r.start <= prev.end and nxt.start <= r.end for r in ranges)
+        if nxt.start - prev.end >= t.gap and not inside_removal and not kept:
             cuts.append((prev.end, nxt.start, prev.text, nxt.text))
     return cuts
 
@@ -278,7 +280,7 @@ def main() -> None:
         mark = " [topic]" if is_topic_start(r, t) else ""
         print(f"  {i:02d} {r.start:8.2f}-{r.end:8.2f} ({r.end - r.start:5.2f}s){mark} {r.text[:70]}")
 
-    flagged = loud_gaps(video, args.audio_track, pause_cuts(words, t))
+    flagged = loud_gaps(video, args.audio_track, pause_cuts(words, ranges, t))
     if flagged:
         print(f"\n{len(flagged)} cut pause(s) hold speech-level audio — likely words the ASR dropped, check before trusting:")
         for a, b, loud, before, after in flagged:
