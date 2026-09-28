@@ -255,6 +255,8 @@ def main() -> None:
     t = Tightening(args.gap, args.pad_before, args.pad_after, args.min_range, args.split_long,
                    args.split_every, sorted(args.remove), sorted(args.topic))
     words = load_words(transcript)
+    if not words:
+        sys.exit(f"no words in {transcript}: nothing to tighten")
     rate = probe_source_fps(video)
     if rate is None:
         sys.exit(f"no frame rate in {video}")
