@@ -1,16 +1,13 @@
-import importlib.util
 import json
 import subprocess
+import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 
-MODULE_PATH = Path(__file__).parents[1] / "helpers" / "render.py"
-SPEC = importlib.util.spec_from_file_location("cutroom_render", MODULE_PATH)
-assert SPEC and SPEC.loader
-render = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(render)
+sys.path.insert(0, str(Path(__file__).parents[1] / "helpers"))
+import render  # noqa: E402
 
 
 class PortraitDetectionTests(unittest.TestCase):

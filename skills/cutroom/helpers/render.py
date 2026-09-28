@@ -31,14 +31,7 @@ import sys
 from fractions import Fraction
 from pathlib import Path
 
-try:
-    from grade import get_preset, auto_grade_for_clip  # same directory
-except Exception:
-    def get_preset(name: str) -> str:
-        return ""
-
-    def auto_grade_for_clip(video, start=0.0, duration=None, verbose=False):  # type: ignore
-        return "eq=contrast=1.03:saturation=0.98", {}
+from grade import auto_grade_for_clip, get_preset  # same directory
 
 
 # -------- Subtitle style (bold-overlay, proven at 1920×1080 and 1080×1920) --
@@ -85,9 +78,11 @@ def resolve_grade_filter(grade_field: str | None) -> str:
     if re.fullmatch(r"[a-zA-Z0-9_\-]+", grade_field):
         try:
             return get_preset(grade_field)
-        except KeyError:
-            print(f"warning: unknown preset '{grade_field}', using as raw filter")
-            return grade_field
+        except KeyError as exc:
+            raise ValueError(
+                f"EDL grade {grade_field!r}: {exc.args[0]}. "
+                "A raw ffmpeg filter needs '=' or ',', e.g. 'eq=contrast=1.1'."
+            ) from exc
     return grade_field
 
 
