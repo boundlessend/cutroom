@@ -536,7 +536,11 @@ def extract_all_segments(
         audio_filter = edge_fades(duration, fade_in=not joins[i], fade_out=not next_joins)
 
         if is_auto:
-            seg_filter, _stats = auto_grade_for_clip(src_path, start=start, duration=duration, verbose=False)
+            # measured on what the grade acts on: an HDR source after its tone mapping
+            seg_filter, _stats = auto_grade_for_clip(
+                src_path, start=start, duration=duration, verbose=False,
+                pre_filter=TONEMAP_CHAIN if is_hdr_source(src_path) else "",
+            )
         else:
             seg_filter = resolved
         # The zoom from the range's `frame` target, then its own `vf`, ride after the

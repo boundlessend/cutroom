@@ -80,8 +80,12 @@ def _sample_frame_stats(
     start: float,
     duration: float,
     n_samples: int = 10,
+    pre_filter: str = "",
 ) -> dict[str, float]:
     """Sample N frames from a range and compute brightness/contrast/saturation stats.
+
+    `pre_filter` runs before the measurement: an HDR source must be measured after
+    the tone mapping the render applies, not as the raw HLG/PQ signal.
 
     Uses ffmpeg's `signalstats` filter which gives us YMIN, YMAX, YAVG, SATAVG
     etc. in the metadata. We average across the sample range.
@@ -106,7 +110,7 @@ def _sample_frame_stats(
             "-ss", f"{start:.3f}",
             "-i", str(video),
             "-t", f"{duration:.3f}",
-            "-vf", f"fps={fps:.2f},signalstats,metadata=print:file={metadata_path}",
+            "-vf", ",".join(f for f in (pre_filter, f"fps={fps:.2f},signalstats,metadata=print:file={metadata_path}") if f),
             "-f", "null", "-",
         ]
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -180,6 +184,7 @@ def auto_grade_for_clip(
     start: float = 0.0,
     duration: float | None = None,
     verbose: bool = False,
+    pre_filter: str = "",
 ) -> tuple[str, dict[str, float]]:
     """Analyze a clip range and emit a subtle per-clip correction filter.
 
@@ -204,7 +209,7 @@ def auto_grade_for_clip(
         except Exception:
             duration = 10.0
 
-    stats = _sample_frame_stats(video, start, duration)
+    stats = _sample_frame_stats(video, start, duration, pre_filter=pre_filter)
 
     y_mean = stats["y_mean"]
     y_range = stats["y_std"] * 4.0  # back to range
