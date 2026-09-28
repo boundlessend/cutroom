@@ -60,7 +60,7 @@ The skill lives in `video-use/`. User footage lives wherever they put it. All se
 
 First-time install lives in `install.md` (clone, deps, ffmpeg, skill registration, API key). Don't re-run it every session; on cold start just verify:
 
-- `ELEVENLABS_API_KEY` resolves — either in the environment or in `.env` at the video-use repo root. If missing, never ask the user to paste the key into the chat: the transcript of this session is stored, so ask them to write `.env` themselves (`$EDITOR <repo>/.env`, then `chmod 600`) or to export the key from their password manager, and wait.
+- `ELEVENLABS_API_KEY` resolves — either in the environment or in `.env` at the video-use repo root. If missing, never ask the user to paste the key into the chat: the transcript of this session is stored, so ask them to write `.env` themselves (`$EDITOR <repo>/.env`, then `chmod 600`) or to export the key from their password manager, and wait. If the user cannot get a key (ElevenLabs is geo-blocked for them), transcribe with `transcribe_local.py` instead and say what it loses.
 - `ffmpeg` + `ffprobe` on PATH.
 - `ffmpeg -h filter=subtitles` and `ffmpeg -h filter=zscale` both print a filter description rather than `Unknown filter` (the exit code is 0 either way, read the text). Homebrew's default `ffmpeg` bottle is built without libass and libzimg, and then burning subtitles and tone-mapping HDR (iPhone HLG) sources fail at render time, not at plan time. If either filter is missing, stop and tell the user to reinstall ffmpeg with those libraries.
 - Python deps installed (`uv sync` inside the repo). There is no system `pip` or `python` on this machine and PEP 668 blocks global installs.
@@ -79,6 +79,7 @@ print `--help` under it anyway, which makes a broken environment look healthy.
 
 - **`transcribe.py <video>`** — single-file Scribe call. `--num-speakers N` optional. Cached.
 - **`transcribe_batch.py <videos_dir>`** — 4-worker parallel transcription. Use for multi-take.
+- **`transcribe_local.py <video_or_dir> --language ru|en`** — free local alternative to Scribe via the `mlx_whisper` CLI (whisper-large-v3-turbo on the Apple GPU), writes the same Scribe-shaped JSON into the same cache, no cost confirmation. No diarization and no audio events; a filler prompt keeps most "эм"/"э-э", not all, so read around suspicious gaps with `timeline_view`. Word edges are looser than Scribe's: pad cuts toward the top of the window.
 - **`pack_transcripts.py --edit-dir <dir>`** — `transcripts/*.json` → `takes_packed.md` (phrase-level, break on silence ≥ 0.5s).
 - **`timeline_view.py <video> <start> <end>`** — filmstrip + waveform PNG. On-demand visual drill-down. **Not a scan tool** — use it at decision points, not constantly.
 - **`render.py <edl.json> -o <out>`** — per-segment extract → concat → overlays (PTS-shifted) → subtitles LAST. `--preview` is 1080p / medium / CRF 22 (QC-grade), `--draft` is 720p / ultrafast / CRF 28 (cut-point check only). `--build-subtitles` to generate master.srt inline. Loudness normalization to -14 LUFS is ON by default, `--no-loudnorm` turns it off. The source frame rate is preserved unless `--fps` overrides it. `"grade": "auto"` in the EDL grades every range from its own frames.
@@ -334,7 +335,7 @@ Things that consistently fail regardless of style:
 - **Hierarchical pre-computed codec formats** with USABILITY / tone tags / shot layers. Over-engineering. Derive from the transcript at decision time.
 - **Hand-tuned moment-scoring functions.** The LLM picks better than any heuristic you'll write.
 - **Whisper SRT / phrase-level output.** Loses sub-second gap data. Always word-level verbatim.
-- **Running Whisper locally on CPU.** Slow and it normalizes fillers. Use hosted Scribe.
+- **Running Whisper locally on CPU.** Slow and it normalizes fillers. Use hosted Scribe, or `transcribe_local.py` (GPU, filler prompt) when Scribe is unreachable.
 - **Burning subtitles into base before compositing overlays.** Overlays hide them. (Hard Rule 1.)
 - **Single-pass filtergraph when you have overlays.** Double re-encodes. Use per-segment extract → concat.
 - **Linear animation easing.** Looks robotic. Always cubic.
