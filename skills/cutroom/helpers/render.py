@@ -481,10 +481,10 @@ def extract_all_segments(
 # -------- Lossless concat ----------------------------------------------------
 
 
-def concat_segments(segment_paths: list[Path], out_path: Path, edit_dir: Path) -> None:
+def concat_segments(segment_paths: list[Path], out_path: Path) -> None:
     """Lossless concat via the concat demuxer. No re-encode; the audio is still PCM."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    concat_list = edit_dir / "_concat.txt"
+    concat_list = out_path.with_suffix(".concat.txt")
     concat_list.write_text("".join(f"file '{p.resolve()}'\n" for p in segment_paths))
 
     cmd = [
@@ -855,7 +855,7 @@ def main() -> None:
     ap.add_argument(
         "--build-subtitles",
         action="store_true",
-        help="Build master.srt from transcripts + EDL offsets before compositing",
+        help="Build <output>.srt from transcripts + EDL offsets before compositing",
     )
     ap.add_argument(
         "--no-subtitles",
@@ -892,21 +892,16 @@ def main() -> None:
         edl, edit_dir, preview=args.preview, draft=args.draft, fps=args.fps
     )
 
-    # 2. Concat → base
-    if args.draft:
-        base_name = "base_draft.mov"
-    elif args.preview:
-        base_name = "base_preview.mov"
-    else:
-        base_name = "base.mov"
-    base_path = edit_dir / base_name
-    concat_segments(segment_paths, base_path, edit_dir)
+    # 2. Concat → base. Intermediates are named after the output, so renders of
+    # several EDLs from one edit dir (parts, a teaser) can run at the same time.
+    base_path = out_path.with_suffix(".base.mov")
+    concat_segments(segment_paths, base_path)
 
     # 3. Subtitles: build if requested, resolve final path
     subs_path: Path | None = None
     if not args.no_subtitles:
         if args.build_subtitles:
-            subs_path = edit_dir / "master.srt"
+            subs_path = out_path.with_suffix(".srt")
             build_master_srt(edl, edit_dir, subs_path, rate)
         elif edl.get("subtitles"):
             subs_path = resolve_subtitles_path(edl["subtitles"], edit_dir)
@@ -932,8 +927,8 @@ def main() -> None:
         print(f"loudness normalization → social-ready ({LOUDNORM_I:g} LUFS / {LOUDNORM_TP:g} dBTP "
               f"delivered, limiter at {LIMITER_TP:g} / LRA {LOUDNORM_LRA:g})")
         apply_loudnorm_two_pass(composite_path, out_path, preview=args.draft)
-    if composite_path != base_path:
-        composite_path.unlink(missing_ok=True)
+    composite_path.unlink(missing_ok=True)
+    base_path.unlink(missing_ok=True)
 
     size_mb = out_path.stat().st_size / (1024 * 1024)
     print(f"\ndone: {out_path} ({size_mb:.1f} MB)")
