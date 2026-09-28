@@ -619,10 +619,11 @@ def build_master_srt(edl: dict, edit_dir: Path, out_path: Path, rate: str) -> No
 LOUDNORM_I = -14.0
 LOUDNORM_TP = -1.0
 LOUDNORM_LRA = 11.0
-# The AAC encode after loudnorm raises true peak by ~0.4 dB (measured: -0.9 dBTP
-# out of loudnorm, -0.5 after AAC 192k). Limit lower so the delivered file meets
-# LOUDNORM_TP; -1.5 measured -1.1 after AAC on a speech track.
-AAC_TP_HEADROOM = 0.5
+# The AAC encode after loudnorm raises true peak by 0.3–0.9 dB depending on the
+# material (measured on one speech track rendered twice: limiter -1.5 gave -1.1
+# and -0.7 dBTP after AAC 192k; limiter -2.0 gave -1.0 and -1.1). Limit lower so
+# the delivered file meets LOUDNORM_TP.
+AAC_TP_HEADROOM = 1.0
 LIMITER_TP = LOUDNORM_TP - AAC_TP_HEADROOM
 
 
