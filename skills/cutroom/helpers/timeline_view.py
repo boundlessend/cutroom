@@ -35,6 +35,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from transcribe import transcript_path
+
 
 # -------- Frame extraction ---------------------------------------------------
 
@@ -70,7 +72,7 @@ def extract_frames(video: Path, start: float, end: float, n: int, dest_dir: Path
 # -------- Audio envelope (librosa if available, ffmpeg fallback) ------------
 
 
-def compute_envelope(video: Path, start: float, end: float, samples: int = 2000) -> np.ndarray:
+def compute_envelope(video: Path, start: float, end: float, audio_track: int, samples: int = 2000) -> np.ndarray:
     """Extract the audio segment and return an RMS envelope of length `samples`.
 
     Uses ffmpeg to dump mono 16kHz PCM to a temp wav, then computes a
@@ -84,7 +86,7 @@ def compute_envelope(video: Path, start: float, end: float, samples: int = 2000)
             "-ss", f"{start:.3f}",
             "-i", str(video),
             "-t", f"{(end - start):.3f}",
-            "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le",
+            "-map", f"0:a:{audio_track}", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le",
             str(wav),
         ]
         r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -193,6 +195,7 @@ def render_timeline(
     out_path: Path,
     n_frames: int,
     transcript: Path | None,
+    audio_track: int,
 ) -> None:
     # Frame extraction
     with tempfile.TemporaryDirectory() as tmp:
@@ -277,7 +280,7 @@ def render_timeline(
             draw.rectangle((xa, wave_y, xb, wave_y + wave_h), fill=SILENCE)
 
         # Waveform envelope
-        env = compute_envelope(video, start, end, samples=max(strip_span, 200))
+        env = compute_envelope(video, start, end, audio_track, samples=max(strip_span, 200))
         mid_y = wave_y + wave_h // 2
         max_amp = wave_h // 2 - 8
         points_top: list[tuple[int, int]] = []
@@ -399,8 +402,9 @@ def main() -> None:
         type=Path,
         default=None,
         help="Path to transcript.json for word labels + silence shading. "
-             "If omitted, will auto-resolve to <video_parent>/edit/transcripts/<video_stem>.json",
+             "If omitted, will auto-resolve to the one transcribe*.py wrote for --audio-track",
     )
+    ap.add_argument("--audio-track", type=int, default=0, help="Zero-based audio track for the waveform and transcript")
     ap.add_argument(
         "--edl",
         type=Path,
@@ -429,7 +433,7 @@ def main() -> None:
     # Auto-resolve transcript if not given
     transcript = args.transcript
     if transcript is None:
-        auto = video.parent / "edit" / "transcripts" / f"{video.stem}.json"
+        auto = transcript_path(video.parent / "edit", video, args.audio_track)
         if auto.exists():
             transcript = auto
 
@@ -446,6 +450,7 @@ def main() -> None:
         out_path=out_path,
         n_frames=args.n_frames,
         transcript=transcript,
+        audio_track=args.audio_track,
     )
 
 

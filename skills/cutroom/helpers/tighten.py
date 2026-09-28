@@ -37,7 +37,7 @@ from pathlib import Path
 import numpy as np
 
 from render import probe_source_fps
-from transcribe import extract_audio
+from transcribe import extract_audio, transcript_path
 
 
 @dataclass(frozen=True)
@@ -230,7 +230,7 @@ def main() -> None:
     ap.add_argument("video", type=Path, help="Source video")
     ap.add_argument("-o", "--output", type=Path, required=True, help="EDL to write")
     ap.add_argument("--transcript", type=Path, default=None,
-                    help="Transcript JSON (default: <video_dir>/edit/transcripts/<stem>.json)")
+                    help="Transcript JSON (default: the one transcribe*.py wrote for --audio-track)")
     ap.add_argument("--gap", type=float, default=0.45, help="Pauses at least this long are cut (default 0.45)")
     ap.add_argument("--pad-before", type=float, default=0.10, help="Air kept before a range's first word (default 0.10)")
     ap.add_argument("--pad-after", type=float, default=0.14, help="Air kept after a range's last word (default 0.14)")
@@ -245,7 +245,7 @@ def main() -> None:
     video = args.video.resolve()
     if not video.exists():
         sys.exit(f"video not found: {video}")
-    transcript = args.transcript or video.parent / "edit" / "transcripts" / f"{video.stem}.json"
+    transcript = args.transcript or transcript_path(video.parent / "edit", video, args.audio_track)
     if not transcript.exists():
         sys.exit(f"transcript not found: {transcript} (transcribe first)")
 

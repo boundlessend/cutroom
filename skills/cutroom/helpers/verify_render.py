@@ -32,8 +32,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from render import loudness, output_offsets, probe_source_fps, segment_duration
-from transcribe import extract_audio
+from render import loudness, output_offsets, probe_source_fps, resolve_path, segment_duration
+from transcribe import extract_audio, transcript_path
 from transcribe_local import run_whisper
 
 NEAR_CUT_S = 0.4
@@ -99,7 +99,7 @@ def expected_words(edl: dict, edit_dir: Path, rate: str) -> list[str]:
     for r in edl["ranges"]:
         src = r["source"]
         if src not in cache:
-            path = edit_dir / "transcripts" / f"{src}.json"
+            path = transcript_path(edit_dir, resolve_path(edl["sources"][src], edit_dir), int(edl.get("audio_track", 0)))
             if not path.exists():
                 sys.exit(f"transcript not found: {path}")
             cache[src] = json.loads(path.read_text())["words"]

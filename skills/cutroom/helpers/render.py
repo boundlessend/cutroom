@@ -35,7 +35,7 @@ from pathlib import Path
 
 from grade import auto_grade_for_clip, get_preset  # same directory
 from reframe import zoom_filters
-from transcribe import count_audio_tracks
+from transcribe import count_audio_tracks, transcript_path
 
 
 # -------- Subtitle style (bold-overlay, proven at 1920×1080 and 1080×1920) --
@@ -667,8 +667,7 @@ def build_master_srt(edl: dict, edit_dir: Path, out_path: Path, rate: str) -> No
     - Output times computed as word.start - segment_start + segment_offset,
       offsets from the frame-quantized segment durations the render produces
     """
-    transcripts_dir = edit_dir / "transcripts"
-
+    audio_track = int(edl.get("audio_track", 0))
     entries: list[tuple[float, float, str]] = []
     seg_offset = 0.0
 
@@ -678,7 +677,8 @@ def build_master_srt(edl: dict, edit_dir: Path, out_path: Path, rate: str) -> No
         seg_duration = segment_duration(seg_start, float(r["end"]), rate)
         seg_end = seg_start + seg_duration
 
-        tr_path = transcripts_dir / f"{src_name}.json"
+        # named by the source file and the track it was made from, as transcribe*.py write it
+        tr_path = transcript_path(edit_dir, resolve_path(edl["sources"][src_name], edit_dir), audio_track)
         if not tr_path.exists():
             print(f"  no transcript for {src_name}, skipping captions for this segment")
             seg_offset += seg_duration
