@@ -1,0 +1,14 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "cutroom",
+  "version": "1.1.1",
+  "description": "Edit videos by conversation: tighten pauses and slips, continuous punch-in reframing, designed on-screen titles, loudness-normalized renders and a one-pass self-check. Free local transcription with mlx-whisper, ElevenLabs Scribe optional. Based on browser-use/video-use.",
+  "author": {
+    "name": "Arseni Okhrimenko",
+    "url": "https://github.com/boundlessend"
+  },
+  "homepage": "https://github.com/boundlessend/cutroom",
+  "repository": "https://github.com/boundlessend/cutroom",
+  "license": "BSD-3-Clause AND MIT",
+  "keywords": ["video-editing", "ffmpeg", "subtitles", "whisper", "mlx-whisper", "elevenlabs"]
+}

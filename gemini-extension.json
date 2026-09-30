@@ -1,0 +1,5 @@
+{
+  "name": "cutroom",
+  "version": "1.1.1",
+  "description": "Edit videos by conversation: tighten pauses and slips, continuous punch-in reframing, designed on-screen titles, loudness-normalized renders and a one-pass self-check. Free local transcription with mlx-whisper, ElevenLabs Scribe optional."
+}

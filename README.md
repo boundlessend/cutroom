@@ -24,7 +24,7 @@ Based on [browser-use/video-use](https://github.com/browser-use/video-use) by Br
 
 ## Requirements
 
-- Claude Code with plugin support.
+- Claude Code with plugin support, or another agent that reads Agent Skills (see Install).
 - [uv](https://docs.astral.sh/uv/) on `PATH`: it builds the helpers' Python environment on first use.
 - `ffmpeg` and `ffprobe` built with libass and libzimg (the `subtitles`, `ass` and `zscale` filters). Homebrew's default `ffmpeg` lacks both; `ffmpeg-full` has them.
 - A transcription path:
@@ -34,10 +34,22 @@ Based on [browser-use/video-use](https://github.com/browser-use/video-use) by Br
 
 ## Install
 
+Claude Code:
+
 ```
 claude plugin marketplace add boundlessend/cutroom
 claude plugin install cutroom@cutroom
 ```
+
+Other agents: the skill follows the [Agent Skills](https://agentskills.io) format, so any of these works for Codex, Cursor, GitHub Copilot, Gemini CLI and the other agents they support:
+
+```
+npx skills add boundlessend/cutroom
+gh skill install boundlessend/cutroom cutroom
+gemini extensions install https://github.com/boundlessend/cutroom
+```
+
+The parallel sub-agents in the skill (animations, the critic pass) are written for Claude Code's `Agent` tool.
 
 ## Use
 
