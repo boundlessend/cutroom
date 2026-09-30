@@ -74,8 +74,8 @@ Helpers (`helpers/transcribe.py`, `helpers/render.py`, etc.) live alongside this
 
 ## Helpers
 
-Run every helper through uv against the skill's own project: `uv run --project <skill dir> python <skill dir>/helpers/<script>.py`.
-uv builds the environment from `pyproject.toml` and `uv.lock` on first use and again after a plugin update replaces the directory; nothing is installed globally.
+Run every helper through uv against the skill's own project: `uv run --frozen --project <skill dir> python <skill dir>/helpers/<script>.py`.
+uv builds the environment exactly from `uv.lock` (`--frozen`: the lock is never re-resolved or rewritten) on first use and again after a plugin update replaces the directory; nothing is installed globally.
 The system `python3` has none of the deps (numpy, requests), and `render.py` / `grade.py`
 print `--help` under it anyway, which makes a broken environment look healthy.
 
@@ -94,7 +94,7 @@ print `--help` under it anyway, which makes a broken environment look healthy.
 To time anything to the output (titles, overlays), write a script into the edit dir and import the helpers from the skill, under the same project:
 
 ```python
-# <edit>/titles.py, run as: uv run --project <skill dir> python <edit>/titles.py
+# <edit>/titles.py, run as: uv run --frozen --project <skill dir> python <edit>/titles.py
 import json, sys
 from pathlib import Path
 sys.path.insert(0, "<skill dir>/helpers")
