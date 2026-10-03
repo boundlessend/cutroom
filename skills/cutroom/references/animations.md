@@ -54,7 +54,7 @@ This is one style. If the brand is warm and serif, use that. If it's colorful an
 
 **Worked example — "show the edit" hook** (a launch video for this tool). Instead of a title card, the first 3s visualize the editing itself: each transcript word pops in on its Scribe timestamp, with bars under it drawn from the real audio envelope; a filler ("ummm") grows letter by letter while it is spoken, turns orange and is cut out on screen at the same frame the audio cuts, and the next line lands immediately. It works because the picture is *driven by the same data as the sound* — one composition (Remotion) reads frame-exact word/envelope JSON produced in Python, so nothing can drift. Use the idea whenever the story is "we removed something": make the removal visible.
 
-**Parallel sub-agent brief** — each animation is one sub-agent spawned via the `Agent` tool. Each prompt is self-contained (sub-agents have no parent context). Include:
+**Parallel sub-agent brief** - each animation is one sub-agent spawned via the host's delegation tool (`Agent` in Claude Code; collaboration or `spawn_agent` in Codex), when available and permitted. Each prompt is self-contained. Without delegation, use the same brief in the main session. Include:
 
 1. One-sentence goal: *"Build ONE animation: [spec]. Nothing else."*
 2. Absolute output path (`<edit>/animations/slot_<id>/render.mp4`)
@@ -67,4 +67,4 @@ This is one style. If the brand is warm and serif, use that. If it's colorful an
 9. Deliverable checklist (script, render, verify duration via ffprobe, report)
 10. **"Do not ask questions. If anything is ambiguous, pick the most obvious interpretation and proceed."**
 
-One sub-agent = one file (unique filenames, parallel agents don't overwrite each other).
+Each worker owns one slot directory and its files. Tell workers they share the workspace, must not revert others' edits, and must stop on denied tools or commands without trying to bypass the guard. Verify their rendered files and reported evidence before accepting the slot.

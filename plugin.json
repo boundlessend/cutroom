@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "cutroom",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Edit videos by conversation: tighten pauses and slips, continuous punch-in reframing, designed on-screen titles, loudness-normalized renders and a one-pass self-check. Free local transcription with mlx-whisper, ElevenLabs Scribe optional. Based on browser-use/video-use.",
   "author": {
     "name": "Arseni Okhrimenko",

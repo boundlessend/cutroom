@@ -30,7 +30,7 @@ These are the things where deviation produces silent failures or broken output. 
 7. **Pad every cut edge.** Working window: 30–200ms. Scribe timestamps drift 50–100ms — padding absorbs the drift. Tighter for fast-paced, looser for cinematic.
 8. **Word-level verbatim ASR only.** Never SRT/phrase mode (loses sub-second gap data). Never normalized fillers (loses editorial signal).
 9. **Cache transcripts per source.** Never re-transcribe unless the source file itself changed.
-10. **Parallel sub-agents for multiple animations.** Never sequential. Spawn N at once via the `Agent` tool; total wall time ≈ slowest one.
+10. **Parallel sub-agents for multiple animations when available and permitted.** In Claude Code use `Agent`; in Codex use the available collaboration or `spawn_agent` tool. Give each worker a separate slot directory. If the host has no delegation tool or disallows it, do the work in the main session and say that it will run sequentially.
 11. **Strategy confirmation before execution.** Never touch the cut until the user has approved the plain-English plan.
 12. **All session outputs in `<videos_dir>/edit/`.** Never write inside the skill directory: it is the plugin's install cache and is replaced on every update.
 13. **Cost confirmation before `transcribe.py` or `transcribe_batch.py`.** Scribe bills per minute, one file or many. Name the number of files and the total minutes that are not already cached in `transcripts/`, then wait for the user's go-ahead. This applies to the Inventory step too. `transcribe_local.py` is free and needs none.
@@ -106,7 +106,7 @@ rate = render.resolve_output_rate(edl, edit, None)       # or the --fps you rend
 t = render.source_to_output(edl, rate, "C0103", 40.10)   # EDL source name, seconds in that source
 ```
 
-For animations, create `<edit>/animations/slot_<id>/` with `Bash` and spawn a sub-agent via the `Agent` tool.
+For animations, create `<edit>/animations/slot_<id>/` with the host's shell tool (`Bash` in Claude Code, `exec_command` in Codex). Use the host's delegation tool when available and permitted; otherwise complete the slot in the main session. Worker prompts must name their owned slot directory and tell workers not to revert others' edits or bypass denied tools and commands.
 
 ## The process
 
@@ -129,7 +129,7 @@ For animations, create `<edit>/animations/slot_<id>/` with `Bash` and spawn a su
 
    Measure the audio, don't assume it: `verify_render.py` reports integrated loudness and true peak; add RMS per section (dialogue, music-only, end card) when there is music. An end card 15 dB under the dialogue, or effects louder than speech, is a bug. You cannot listen: say so, and report the numbers.
 
-   For anything the user will publish (launch, promo, ad), also spawn one **critic sub-agent** with the rendered file, the EDL, and any reference videos the user gave. Brief it to roast, not to praise: a verdict, ranked problems with timecodes and evidence (frames, levels), and the 5 fixes to do first. Fresh eyes catch what the author stopped seeing — cut-off payoff lines, 0.5s memes, unreadable 28px text at phone size.
+   For anything the user will publish (launch, promo, ad), also use one **critic sub-agent** when delegation is available and permitted, with the rendered file, the EDL, and any reference videos the user gave. Brief it to roast, not to praise: a verdict, ranked problems with timecodes and evidence (frames, levels), and the 5 fixes to do first. Otherwise do that critic pass in the main session and disclose the lack of an independent review. Fresh eyes catch what the author stopped seeing - cut-off payoff lines, 0.5s memes, unreadable 28px text at phone size.
 
    If anything fails: fix → re-render → re-eval. **Cap at 3 self-eval passes** — if issues remain after 3, flag them to the user rather than looping forever. Only present the preview once the self-eval passes.
 8. **Iterate + persist.** Natural-language feedback, re-plan, re-render. Never re-transcribe. Final render on confirmation. Append to `project.md`.
@@ -236,7 +236,7 @@ Things that consistently fail regardless of style:
 - **Stock SFX on every transition.** Tie each effect to a visible event; cap the count.
 - **Hard audio cuts at segment boundaries.** Audible pops. (Hard Rule 3.)
 - **Typing text centered on the partial string.** Text slides left as it grows.
-- **Sequential sub-agents for multiple animations.** Always parallel.
+- **Sequential sub-agents for multiple animations when parallel delegation is available and permitted.** Dispatch independent slots together.
 - **Editing before confirming the strategy.** Never.
 - **Re-transcribing cached sources.** Immutable outputs of immutable inputs.
 - **Assuming what kind of video it is.** Look first, ask second, edit last.

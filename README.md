@@ -1,6 +1,6 @@
 # cutroom
 
-Conversational video editing for Claude Code. Point it at your footage and say what you want: cut the pauses and slips, punch in and out so a static shot does not sit still, put names and prices on screen, normalize the loudness. It transcribes, plans the cut with you, renders, checks its own output and iterates.
+Conversational video editing for Claude Code and Codex. Point it at your footage and say what you want: cut the pauses and slips, punch in and out so a static shot does not sit still, put names and prices on screen, normalize the loudness. It transcribes, plans the cut with you, renders, checks its own output and iterates.
 
 Based on [browser-use/video-use](https://github.com/browser-use/video-use) by Browser Use.
 
@@ -34,14 +34,40 @@ Based on [browser-use/video-use](https://github.com/browser-use/video-use) by Br
 
 ## Install
 
-Claude Code:
+### Claude Code
 
 ```
 claude plugin marketplace add boundlessend/cutroom
 claude plugin install cutroom@cutroom
 ```
 
-Other agents: the skill follows the [Agent Skills](https://agentskills.io) format, so any of these works for Codex, Cursor, GitHub Copilot, Gemini CLI and the other agents they support:
+### Codex
+
+```bash
+codex plugin marketplace add boundlessend/cutroom
+codex plugin add cutroom@cutroom
+```
+
+In the Codex desktop app, open the plugin directory, select **Cutroom**, and install **cutroom**. Start a new chat after installing.
+
+Cutroom is also available from the shared **Senya Plugins** marketplace:
+
+```bash
+codex plugin marketplace add boundlessend/yougile-tracking
+codex plugin add cutroom@senya-plugins
+```
+
+Choose one marketplace for Cutroom to avoid duplicate skills.
+
+For a standalone skill, ask Codex:
+
+```text
+$skill-installer install https://github.com/boundlessend/cutroom/tree/main/skills/cutroom
+```
+
+### Other agents
+
+The skill follows the [Agent Skills](https://agentskills.io) format. Choose an installer supported by your agent:
 
 ```
 npx skills add boundlessend/cutroom
@@ -49,7 +75,25 @@ gh skill install boundlessend/cutroom cutroom
 gemini extensions install https://github.com/boundlessend/cutroom
 ```
 
-The parallel sub-agents in the skill (animations, the critic pass) are written for Claude Code's `Agent` tool.
+Animation workers and the critic pass use the host's delegation tools: `Agent` in Claude Code, collaboration or `spawn_agent` in Codex. If delegation is unavailable or disallowed, the main session does the work sequentially and reports that limitation.
+
+## Updating
+
+Claude Code:
+
+```bash
+claude plugin marketplace update cutroom
+claude plugin update cutroom@cutroom
+```
+
+Codex:
+
+```bash
+codex plugin marketplace upgrade cutroom
+codex plugin add cutroom@cutroom
+```
+
+If you installed from `senya-plugins`, use that marketplace name instead. Restart the host after updating.
 
 ## Use
 
